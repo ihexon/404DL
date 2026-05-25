@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type TMDBClient struct {
@@ -66,11 +68,13 @@ func (c *TMDBClient) ResolveMovie(ctx context.Context, query string) (Movie, err
 		return Movie{}, nil
 	}
 
+	log.WithField("query", query).Info("tmdb movie resolve started")
 	resp, err := c.search(ctx, query)
 	if err != nil {
 		return Movie{}, err
 	}
 	if len(resp.Results) == 0 {
+		log.WithField("query", query).Info("tmdb movie resolve returned no results")
 		return Movie{}, nil
 	}
 
@@ -80,10 +84,17 @@ func (c *TMDBClient) ResolveMovie(ctx context.Context, query string) (Movie, err
 		title = best.Title
 	}
 
-	return Movie{
+	movie := Movie{
 		Title: normalizeTitle(title),
 		Year:  yearFromDate(best.ReleaseDate),
-	}, nil
+	}
+	log.WithFields(log.Fields{
+		"query":          query,
+		"resolved_title": movie.Title,
+		"year":           movie.Year,
+		"candidates":     len(resp.Results),
+	}).Info("tmdb movie resolve completed")
+	return movie, nil
 }
 
 func (c *TMDBClient) search(ctx context.Context, query string) (tmdbSearchResponse, error) {

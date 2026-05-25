@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
+
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
 )
@@ -78,12 +80,26 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 
 	var out []model.Torrent
 	for page := 1; page <= pages && len(out) < limit; page++ {
+		log.WithFields(log.Fields{
+			"provider":   c.Name(),
+			"query":      req.Query,
+			"resolution": req.Resolution,
+			"page":       page,
+			"limit":      pageSize,
+		}).Info("torrentclaw api page request prepared")
 		resp, err := c.searchPage(ctx, req.Query, req.Resolution, page, pageSize)
 		if err != nil {
 			return nil, err
 		}
 
-		out = append(out, c.flatten(resp)...)
+		pageResults := c.flatten(resp)
+		log.WithFields(log.Fields{
+			"provider": c.Name(),
+			"page":     page,
+			"contents": len(resp.Results),
+			"torrents": len(pageResults),
+		}).Info("torrentclaw api page response decoded")
+		out = append(out, pageResults...)
 		if len(resp.Results) == 0 || len(resp.Results) < resp.PageSize {
 			break
 		}

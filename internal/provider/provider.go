@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	log "github.com/sirupsen/logrus"
+
 	"mvdl/internal/model"
 )
 
@@ -34,8 +36,15 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	if len(a.providers) == 0 {
 		return nil, errors.New("no providers configured")
 	}
+	log.WithFields(log.Fields{
+		"query":      req.Query,
+		"resolution": req.Resolution,
+		"limit":      req.Limit,
+		"providers":  len(a.providers),
+	}).Info("provider aggregation started")
 
 	type result struct {
+		provider string
 		torrents []model.Torrent
 		err      error
 	}
@@ -46,12 +55,23 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 		wg.Add(1)
 		go func(p Provider) {
 			defer wg.Done()
+			log.WithFields(log.Fields{
+				"provider":   p.Name(),
+				"query":      req.Query,
+				"resolution": req.Resolution,
+				"limit":      req.Limit,
+			}).Info("provider search started")
 			torrents, err := p.Search(ctx, req)
 			if err != nil {
-				results <- result{err: fmt.Errorf("%s: %w", p.Name(), err)}
+				log.WithError(err).WithField("provider", p.Name()).Info("provider search failed")
+				results <- result{provider: p.Name(), err: fmt.Errorf("%s: %w", p.Name(), err)}
 				return
 			}
-			results <- result{torrents: torrents}
+			log.WithFields(log.Fields{
+				"provider": p.Name(),
+				"count":    len(torrents),
+			}).Info("provider search completed")
+			results <- result{provider: p.Name(), torrents: torrents}
 		}(p)
 	}
 
@@ -74,8 +94,11 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 		return nil, errors.Join(errs...)
 	}
 
+	beforeFilter := len(merged)
 	merged = filterByResolution(merged, req.Resolution)
+	afterFilter := len(merged)
 	merged = dedupe(merged)
+	afterDedupe := len(merged)
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].Seeders > merged[j].Seeders
 	})
@@ -83,6 +106,15 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 		merged = merged[:req.Limit]
 	}
 
+	log.WithFields(log.Fields{
+		"query":         req.Query,
+		"resolution":    req.Resolution,
+		"before_filter": beforeFilter,
+		"after_filter":  afterFilter,
+		"after_dedupe":  afterDedupe,
+		"returned":      len(merged),
+		"errors":        len(errs),
+	}).Info("provider aggregation completed")
 	return merged, nil
 }
 

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
+
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
 )
@@ -53,29 +55,45 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 	params := parseTorrentQuery(r)
+	fields := log.Fields{
+		"method":     r.Method,
+		"path":       r.URL.Path,
+		"query":      params.SearchName,
+		"resolution": params.Resolution,
+	}
 	if strings.TrimSpace(params.SearchName) == "" {
+		log.WithFields(fields).Info("rejecting request: missing search")
 		writeError(w, http.StatusBadRequest, "search name is required")
 		return
 	}
 	if strings.TrimSpace(params.Resolution) == "" {
+		log.WithFields(fields).Info("rejecting request: missing resolution")
 		writeError(w, http.StatusBadRequest, "resolution is required")
 		return
 	}
 	if len(params.SearchName) > 200 {
+		log.WithFields(fields).Info("rejecting request: search too long")
 		writeError(w, http.StatusBadRequest, "search name is too long")
 		return
 	}
 
+	log.WithFields(fields).Info("torrent search request received")
 	hits, err := h.client.Search(r.Context(), provider.SearchRequest{
 		Query:      params.SearchName,
 		Resolution: params.Resolution,
 		Limit:      h.pageSize,
 	})
 	if err != nil {
+		log.WithError(err).WithFields(fields).Info("torrent search request failed")
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
+	log.WithFields(log.Fields{
+		"query":      params.SearchName,
+		"resolution": params.Resolution,
+		"count":      len(hits),
+	}).Info("torrent search request completed")
 	writeJSON(w, http.StatusOK, hits)
 }
 
