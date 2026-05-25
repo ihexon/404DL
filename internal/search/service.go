@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 
+	log "github.com/sirupsen/logrus"
+
 	"mvdl/internal/metadata"
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
@@ -30,9 +32,17 @@ func NewService(resolver metadata.Resolver, provider ProviderSearcher) *Service 
 func (s *Service) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
 	movie, err := s.resolver.ResolveMovie(ctx, req.Query)
 	if err != nil {
-		return nil, err
+		log.WithError(err).WithField("query", req.Query).Warn("metadata resolver failed; falling back to original query")
+		return s.provider.Search(ctx, req)
 	}
-	req.Query = movie.SearchQuery(req.Query)
+	resolvedQuery := movie.SearchQuery(req.Query)
+	if resolvedQuery != req.Query {
+		log.WithFields(log.Fields{
+			"query":          req.Query,
+			"resolved_query": resolvedQuery,
+		}).Info("metadata resolver normalized query")
+		req.Query = resolvedQuery
+	}
 
 	return s.provider.Search(ctx, req)
 }

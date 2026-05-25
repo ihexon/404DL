@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
+
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
 )
@@ -75,6 +77,11 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	if size <= 0 || size > 200 {
 		size = 200
 	}
+	log.WithFields(log.Fields{
+		"provider": c.Name(),
+		"query":    req.Query,
+		"size":     size,
+	}).Info("knaben api request prepared")
 
 	hits, err := c.search(ctx, SearchRequest{
 		SearchType:     "100%",
@@ -90,6 +97,10 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	if err != nil {
 		return nil, err
 	}
+	log.WithFields(log.Fields{
+		"provider": c.Name(),
+		"count":    len(hits),
+	}).Info("knaben api response decoded")
 
 	out := make([]model.Torrent, 0, len(hits))
 	for _, hit := range hits {

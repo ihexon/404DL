@@ -2,11 +2,12 @@ package main
 
 import (
 	"flag"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	"mvdl/internal/knaben"
 	"mvdl/internal/metadata"
@@ -17,6 +18,8 @@ import (
 )
 
 func main() {
+	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
+
 	listen := flag.String("listen", envString("ADDR", ":8080"), "listen address, for example :8080 or 127.0.0.1:8080")
 	flag.Parse()
 
@@ -33,18 +36,28 @@ func main() {
 	aggregator := provider.NewAggregator(providers...)
 	resolver := metadata.Resolver(metadata.NoopResolver{})
 	if apiKey := envString("MVDL_TMDB_APIKEY", ""); apiKey != "" {
+		log.WithFields(log.Fields{
+			"api_key": maskAPIKey(apiKey),
+			"api_url": envString("TMDB_API_URL", "https://api.themoviedb.org/3"),
+		}).Info("tmdb resolver enabled")
 		resolver = metadata.NewTMDBClient(metadata.TMDBOptions{
 			APIURL:     envString("TMDB_API_URL", "https://api.themoviedb.org/3"),
 			APIKey:     apiKey,
 			HTTPClient: cfg.HTTPClient,
 		})
+	} else {
+		log.Info("tmdb resolver disabled: MVDL_TMDB_APIKEY is not set")
 	}
 	searcher := search.NewService(resolver, aggregator)
 	handler := server.NewHandler(searcher, cfg)
 
-	log.Printf("listening on %s", cfg.Addr)
+	log.WithFields(log.Fields{
+		"listen":  cfg.Addr,
+		"limit":   cfg.PageSize,
+		"timeout": cfg.HTTPClient.Timeout.String(),
+	}).Info("server listening")
 	if err := http.ListenAndServe(cfg.Addr, handler.Routes()); err != nil {
-		log.Fatal(err)
+		log.WithError(err).Fatal("server stopped")
 	}
 }
 
@@ -79,4 +92,11 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func maskAPIKey(value string) string {
+	if len(value) <= 4 {
+		return "****"
+	}
+	return value[:len(value)-4] + "****"
 }

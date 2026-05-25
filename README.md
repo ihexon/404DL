@@ -62,6 +62,9 @@ search. The resolved English/original title plus release year is sent to the
 torrent providers. `MVDL_TMDB_APIKEY` may be either a TMDb v3 API key or a TMDb
 API Read Access Token.
 
+If TMDb returns an error, for example because the key expired, the server logs a
+warning to stdout/stderr and falls back to the original search term.
+
 ## Docker
 
 Build:
