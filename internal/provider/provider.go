@@ -29,7 +29,7 @@ type Aggregator struct {
 }
 
 func NewAggregator(providers ...Provider) *Aggregator {
-	return &Aggregator{providers: providers}
+	return &Aggregator{providers: append([]Provider(nil), providers...)}
 }
 
 func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Torrent, error) {
@@ -63,9 +63,6 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 			}).Info("provider search started")
 			torrents, err := p.Search(ctx, req)
 			if err != nil {
-				fields := ErrorFields(err)
-				fields["provider"] = p.Name()
-				log.WithFields(fields).Warn("provider search failed")
 				results <- result{provider: p.Name(), err: fmt.Errorf("%s: %w", p.Name(), err)}
 				return
 			}
@@ -88,6 +85,9 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	)
 	for res := range results {
 		if res.err != nil {
+			fields := ErrorFields(res.err)
+			fields["provider"] = res.provider
+			log.WithFields(fields).Warn("provider search failed")
 			errs = append(errs, res.err)
 			failedProviders = append(failedProviders, res.provider)
 			continue
@@ -111,6 +111,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	if req.Limit > 0 && len(merged) > req.Limit {
 		merged = merged[:req.Limit]
 	}
+	merged = append([]model.Torrent(nil), merged...)
 
 	log.WithFields(log.Fields{
 		"query":         req.Query,

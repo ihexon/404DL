@@ -1,9 +1,18 @@
 package main
 
 const (
-	MVDL_CRYKEY = "MVDL_CRYKEY"
-
-	EnvTorrentClawAPIKey = "TORRENTCLAW_API_KEY"
+	envCryptoKey          = "MVDL_CRYKEY"
+	envAddr               = "ADDR"
+	envPageSize           = "PAGE_SIZE"
+	envUpstreamTimeout    = "UPSTREAM_TIMEOUT"
+	envKnabenAPIURL       = "KNABEN_API_URL"
+	envTMDBAPIKey         = "MVDL_TMDB_APIKEY"
+	envTMDBAPIURL         = "TMDB_API_URL"
+	envTorrentClawAPIKey  = "TORRENTCLAW_API_KEY"
+	envTorrentClawAPIURL  = "TORRENTCLAW_API_URL"
+	defaultKnabenAPIURL   = "https://api.knaben.org/v1"
+	defaultTorrentClawURL = "https://torrentclaw.com/api/v1"
+	defaultTMDBAPIURL     = "https://api.themoviedb.org/3"
 
 	FlagPageSize             = "page-size"
 	FlagListen               = "listen"
@@ -34,7 +43,4 @@ const (
 	SubCmdDownload = "download"
 	SubCmdQuery    = "query"
 	SubCmdServer   = "server"
-
-	KNABEN_API_URL      = "https://api.knaben.org/v1"
-	TORRENTCLAW_API_URL = "https://torrentclaw.com/api/v1"
 )

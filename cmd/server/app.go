@@ -1,6 +1,10 @@
 package main
 
-import "github.com/urfave/cli/v2"
+import (
+	"time"
+
+	"github.com/urfave/cli/v2"
+)
 
 func newApp() *cli.App {
 	return &cli.App{
@@ -28,19 +32,22 @@ func newServerCommand() *cli.Command {
 func serverFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
-			Name:  FlagListen,
-			Usage: "listen address",
-			Value: DefaultListenAddr,
+			Name:    FlagListen,
+			Usage:   "listen address",
+			Value:   DefaultListenAddr,
+			EnvVars: []string{envAddr},
 		},
 		&cli.IntFlag{
-			Name:  FlagPageSize,
-			Usage: "return page size, default 50",
-			Value: 50,
+			Name:    FlagPageSize,
+			Usage:   "return page size, default 50",
+			Value:   50,
+			EnvVars: []string{envPageSize},
 		},
-		&cli.IntFlag{
-			Name:  FlagTimeout,
-			Usage: "upstream timeout, default 8s",
-			Value: 8,
+		&cli.DurationFlag{
+			Name:    FlagTimeout,
+			Usage:   "upstream timeout, default 8s",
+			Value:   8 * time.Second,
+			EnvVars: []string{envUpstreamTimeout},
 		},
 	}
 }
@@ -56,10 +63,10 @@ func newQueryCommand() *cli.Command {
 				Usage: "video resolution, for example 1080p or 2160p",
 				Value: "1080p",
 			},
-			&cli.IntFlag{
+			&cli.DurationFlag{
 				Name:  FlagTimeout,
 				Usage: "search timeout, default 8s",
-				Value: 8,
+				Value: 8 * time.Second,
 			},
 			&cli.IntFlag{
 				Name:  FlagPageSize,

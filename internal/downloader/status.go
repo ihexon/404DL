@@ -3,37 +3,63 @@ package downloader
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/anacrolix/torrent"
+	log "github.com/sirupsen/logrus"
 )
 
-func serveStatus(ctx context.Context, client *torrent.Client, addr string) error {
+type statusServer struct {
+	server *http.Server
+	done   chan struct{}
+}
+
+func serveStatus(ctx context.Context, client *torrent.Client, addr string) (*statusServer, error) {
 	if strings.TrimSpace(addr) == "" {
-		return nil
+		return nil, nil
 	}
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listen status server: %w", err)
+		return nil, fmt.Errorf("listen status server: %w", err)
 	}
 
 	server := &http.Server{
 		Addr:    addr,
 		Handler: statusHandler(client),
 	}
+	status := &statusServer{
+		server: server,
+		done:   make(chan struct{}),
+	}
 
 	go shutdownStatusServer(ctx, server)
 	go func() {
+		defer close(status.done)
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			_, _ = fmt.Fprintf(io.Discard, "status server stopped: %v", err)
+			log.WithError(err).Warn("status server stopped")
 		}
 	}()
-	return nil
+	return status, nil
+}
+
+func (s *statusServer) Close(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if err := s.server.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown status server: %w", err)
+	}
+
+	select {
+	case <-s.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func statusHandler(client *torrent.Client) http.Handler {

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -43,23 +44,33 @@ func (e *HTTPError) Unwrap() error {
 }
 
 func NewRequestError(provider string, req *http.Request, err error) error {
-	return &HTTPError{
+	httpErr := &HTTPError{
 		Provider: provider,
 		Phase:    ErrorPhaseRequest,
-		Method:   req.Method,
-		URL:      req.URL.String(),
 		Err:      err,
 	}
+	setRequestFields(httpErr, req)
+	return httpErr
 }
 
 func NewStatusError(provider string, req *http.Request, status int, body string) error {
-	return &HTTPError{
+	httpErr := &HTTPError{
 		Provider: provider,
 		Phase:    ErrorPhaseResponse,
-		Method:   req.Method,
-		URL:      req.URL.String(),
 		Status:   status,
 		Body:     body,
+	}
+	setRequestFields(httpErr, req)
+	return httpErr
+}
+
+func setRequestFields(httpErr *HTTPError, req *http.Request) {
+	if req == nil {
+		return
+	}
+	httpErr.Method = req.Method
+	if req.URL != nil {
+		httpErr.URL = req.URL.String()
 	}
 }
 
@@ -68,8 +79,8 @@ func ErrorFields(err error) log.Fields {
 		"error": err,
 	}
 
-	httpErr, ok := AsHTTPError(err)
-	if !ok {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
 		fields["error_phase"] = "provider"
 		fields["cause"] = err.Error()
 		fields["cause_type"] = fmt.Sprintf("%T", err)
@@ -91,9 +102,4 @@ func ErrorFields(err error) log.Fields {
 		fields["cause_type"] = fmt.Sprintf("%T", httpErr.Err)
 	}
 	return fields
-}
-
-func AsHTTPError(err error) (*HTTPError, bool) {
-	httpErr, ok := err.(*HTTPError)
-	return httpErr, ok
 }
