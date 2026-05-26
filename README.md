@@ -77,6 +77,18 @@ go run ./cmd/server query 真人快打2
 `query` uses `1080p` by default. Pass `--resolution 2160p` before the movie name
 to search another resolution.
 
+Debug one provider at a time:
+
+```bash
+go run ./cmd/server query --provider torrentclaw 真人快打2
+```
+
+Repeat `--provider` to query a selected set:
+
+```bash
+go run ./cmd/server query --provider knaben --provider torrentclaw 真人快打2
+```
+
 Generate an AES-256 key for `MVDL_CRYKEY`:
 
 ```bash
@@ -143,12 +155,16 @@ PAGE_SIZE=200
 UPSTREAM_TIMEOUT=8s
 KNABEN_API_URL=https://api.knaben.org/v1
 TORRENTCLAW_API_URL=https://torrentclaw.com/api/v1
+TORRENTCLAW_API_KEY=
 MVDL_TMDB_APIKEY=
 TMDB_API_URL=https://api.themoviedb.org/3
 MVDL_CRYKEY=
 ```
 
 `PAGE_SIZE` is capped at 200.
+
+Set `TORRENTCLAW_API_KEY` to send `Authorization: Bearer <key>` to TorrentClaw.
+TorrentClaw requires an API key for magnet links and `.torrent` download URLs.
 
 When `MVDL_CRYKEY` is set, every non-empty `magnetUrl` in the JSON response is
 encrypted with AES-256-GCM before it is returned. The key must be exactly 32

@@ -66,6 +66,10 @@ func newQueryCommand() *cli.Command {
 				Usage: "return page size, default 50",
 				Value: 50,
 			},
+			&cli.StringSliceFlag{
+				Name:  FlagProvider,
+				Usage: "debug selected providers; repeat for multiple providers, for example --provider knaben --provider torrentclaw",
+			},
 		},
 		Action: runSearch,
 	}

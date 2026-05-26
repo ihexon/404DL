@@ -143,13 +143,13 @@ func (c *Client) search(ctx context.Context, req SearchRequest) ([]torrent, erro
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("call knaben api: %w", err)
+		return nil, provider.NewRequestError(c.Name(), httpReq, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("knaben api returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		return nil, provider.NewStatusError(c.Name(), httpReq, resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 
 	var out SearchResponse

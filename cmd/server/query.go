@@ -31,7 +31,8 @@ func runSearch(c *cli.Context) error {
 	cfg.Addr = "127.0.0.1:0"
 	cfg.HTTPClient = client
 
-	baseURL, shutdown, err := serveQuery(cfg)
+	providerNames := c.StringSlice(FlagProvider)
+	baseURL, shutdown, err := serveQuery(cfg, providerNames...)
 	if err != nil {
 		return err
 	}
@@ -45,6 +46,7 @@ func runSearch(c *cli.Context) error {
 	logrus.WithFields(logrus.Fields{
 		"search":     searchName,
 		"resolution": c.String(FlagResolution),
+		"providers":  providerNames,
 	}).Info("search request started")
 
 	req, err := http.NewRequestWithContext(c.Context, http.MethodGet, searchURL, nil)
@@ -67,14 +69,19 @@ func runSearch(c *cli.Context) error {
 	return nil
 }
 
-func serveQuery(cfg server.Config) (string, func(), error) {
+func serveQuery(cfg server.Config, providerNames ...string) (string, func(), error) {
+	handler, err := newSearchHandler(cfg, providerNames...)
+	if err != nil {
+		return "", nil, err
+	}
+
 	listener, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		return "", nil, fmt.Errorf("listen query server: %w", err)
 	}
 
 	httpServer := &http.Server{
-		Handler: newSearchHandler(cfg).Routes(),
+		Handler: handler.Routes(),
 	}
 	done := make(chan struct{})
 	go func() {

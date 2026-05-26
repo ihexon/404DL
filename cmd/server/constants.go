@@ -3,8 +3,11 @@ package main
 const (
 	MVDL_CRYKEY = "MVDL_CRYKEY"
 
+	EnvTorrentClawAPIKey = "TORRENTCLAW_API_KEY"
+
 	FlagPageSize             = "page-size"
 	FlagListen               = "listen"
+	FlagProvider             = "provider"
 	FlagResolution           = "resolution"
 	FlagTimeout              = "timeout"
 	FlagSaveTo               = "save-to"

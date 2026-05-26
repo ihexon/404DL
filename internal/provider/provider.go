@@ -63,7 +63,9 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 			}).Info("provider search started")
 			torrents, err := p.Search(ctx, req)
 			if err != nil {
-				log.WithError(err).WithField("provider", p.Name()).Info("provider search failed")
+				fields := ErrorFields(err)
+				fields["provider"] = p.Name()
+				log.WithFields(fields).Warn("provider search failed")
 				results <- result{provider: p.Name(), err: fmt.Errorf("%s: %w", p.Name(), err)}
 				return
 			}
@@ -79,14 +81,18 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	close(results)
 
 	var (
-		merged []model.Torrent
-		errs   []error
+		merged          []model.Torrent
+		errs            []error
+		okProviders     []string
+		failedProviders []string
 	)
 	for res := range results {
 		if res.err != nil {
 			errs = append(errs, res.err)
+			failedProviders = append(failedProviders, res.provider)
 			continue
 		}
+		okProviders = append(okProviders, res.provider)
 		merged = append(merged, res.torrents...)
 	}
 
@@ -114,6 +120,8 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 		"after_dedupe":  afterDedupe,
 		"returned":      len(merged),
 		"errors":        len(errs),
+		"providers_ok":  okProviders,
+		"providers_err": failedProviders,
 	}).Info("provider aggregation completed")
 	return merged, nil
 }
