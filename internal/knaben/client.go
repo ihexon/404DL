@@ -15,18 +15,27 @@ import (
 	"mvdl/internal/provider"
 )
 
+const (
+	defaultAPIURL = "https://api.knaben.org/v1"
+	maxPageSize   = 200
+)
+
 type Client struct {
 	apiURL     string
 	httpClient *http.Client
 }
 
 func NewClient(apiURL string, httpClient *http.Client) *Client {
+	apiURL = strings.TrimRight(apiURL, "/")
+	if apiURL == "" {
+		apiURL = defaultAPIURL
+	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
 	return &Client{
-		apiURL:     strings.TrimRight(apiURL, "/"),
+		apiURL:     apiURL,
 		httpClient: httpClient,
 	}
 }
@@ -74,8 +83,8 @@ func (c *Client) Name() string {
 
 func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
 	size := req.Limit
-	if size <= 0 || size > 200 {
-		size = 200
+	if size <= 0 || size > maxPageSize {
+		size = maxPageSize
 	}
 	log.WithFields(log.Fields{
 		"provider": c.Name(),

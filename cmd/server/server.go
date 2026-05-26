@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	"mvdl/internal/cryptoutil"
-	"mvdl/internal/domain"
+	"mvdl/internal/crypto"
 	"mvdl/internal/metadata"
 	"mvdl/internal/server"
 )
@@ -56,20 +54,20 @@ func newServerConfig(c *cli.Context) (server.Config, error) {
 		Addr:     c.String(FlagListen),
 		PageSize: c.Int(FlagPageSize),
 		HTTPClient: &http.Client{
-			Timeout: time.Duration(c.Int(FlagTimeout)) * time.Second,
+			Timeout: c.Duration(FlagTimeout),
 		},
 		MagnetEncryptor: magnetEncryptor,
 	}, nil
 }
 
-func newMagnetEncryptor() (domain.StringEncryptor, error) {
-	key := envString(MVDL_CRYKEY, "")
+func newMagnetEncryptor() (server.StringEncryptor, error) {
+	key := envString(envCryptoKey, "")
 	if key == "" {
-		logrus.Warnf("magnetUrl encryption disabled: environment var %s is not set", MVDL_CRYKEY)
+		logrus.Warnf("magnetUrl encryption disabled: environment var %s is not set", envCryptoKey)
 		return nil, nil
 	}
 
-	encryptor, err := cryptoutil.NewStringEncryptor(key)
+	encryptor, err := crypto.NewStringEncryptor(key)
 	if err != nil {
 		return nil, fmt.Errorf("invalid magnetUrl encryption key: %w", err)
 	}
@@ -77,14 +75,14 @@ func newMagnetEncryptor() (domain.StringEncryptor, error) {
 }
 
 func newMetadataResolver(client *http.Client) metadata.Resolver {
-	apiKey := envString("MVDL_TMDB_APIKEY", "")
+	apiKey := envString(envTMDBAPIKey, "")
 	if apiKey == "" {
-		logrus.Warnf("tmdb resolver disabled: MVDL_TMDB_APIKEY is not set")
+		logrus.Warnf("tmdb resolver disabled: %s is not set", envTMDBAPIKey)
 		return nil
 	}
 
 	return metadata.NewTMDBClient(metadata.TMDBOptions{
-		APIURL:     "https://api.themoviedb.org/3",
+		APIURL:     envString(envTMDBAPIURL, defaultTMDBAPIURL),
 		APIKey:     apiKey,
 		HTTPClient: client,
 	})

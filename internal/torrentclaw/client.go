@@ -16,6 +16,13 @@ import (
 	"mvdl/internal/provider"
 )
 
+const (
+	defaultAPIURL = "https://torrentclaw.com/api/v1"
+	maxLimit      = 200
+	pageSize      = 50
+	maxPages      = 4
+)
+
 type Client struct {
 	apiURL     string
 	apiKey     string
@@ -31,12 +38,16 @@ func WithAPIKey(apiKey string) Option {
 }
 
 func NewClient(apiURL string, httpClient *http.Client, opts ...Option) *Client {
+	apiURL = strings.TrimRight(apiURL, "/")
+	if apiURL == "" {
+		apiURL = defaultAPIURL
+	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
 	client := &Client{
-		apiURL:     strings.TrimRight(apiURL, "/"),
+		apiURL:     apiURL,
 		httpClient: httpClient,
 	}
 	for _, opt := range opts {
@@ -82,14 +93,13 @@ type torrentInfo struct {
 
 func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
 	limit := req.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 200
+	if limit <= 0 || limit > maxLimit {
+		limit = maxLimit
 	}
 
-	const pageSize = 50
 	pages := (limit + pageSize - 1) / pageSize
-	if pages > 4 {
-		pages = 4
+	if pages > maxPages {
+		pages = maxPages
 	}
 
 	var out []model.Torrent

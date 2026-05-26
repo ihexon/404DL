@@ -43,6 +43,10 @@ func DownloadTorrentFile(ctx context.Context, torrentPath string, cfg Config) er
 }
 
 func download(ctx context.Context, cfg Config, addTorrent addTorrentFunc) (err error) {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	client, clientStorage, err := newTorrentClient(cfg)
 	if err != nil {
 		return err
@@ -53,9 +57,11 @@ func download(ctx context.Context, cfg Config, addTorrent addTorrentFunc) (err e
 		closeTorrentResources(client, clientStorage, closeTimeout(cfg, interrupted))
 	}()
 
-	if err := serveStatus(ctx, client, cfg.StatusAddr); err != nil {
+	status, err := serveStatus(ctx, client, cfg.StatusAddr)
+	if err != nil {
 		return err
 	}
+	defer closeStatusServer(status)
 
 	t, err := addTorrent(client)
 	if err != nil {
@@ -158,5 +164,17 @@ func closeTorrentClient(client *torrent.Client) {
 func closeDownloadStorage(clientStorage storage.ClientImplCloser) {
 	if err := clientStorage.Close(); err != nil {
 		log.WithError(err).Warn("close torrent storage")
+	}
+}
+
+func closeStatusServer(server *statusServer) {
+	if server == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.Close(ctx); err != nil {
+		log.WithError(err).Warn("close status server")
 	}
 }

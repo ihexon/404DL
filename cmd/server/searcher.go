@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"mvdl/internal/domain"
 	"mvdl/internal/knaben"
 	"mvdl/internal/provider"
 	"mvdl/internal/search"
@@ -21,22 +20,22 @@ var providerFactories = []providerFactory{
 	{
 		name: "knaben",
 		new: func(client *http.Client) provider.Provider {
-			return knaben.NewClient(KNABEN_API_URL, client)
+			return knaben.NewClient(envString(envKnabenAPIURL, defaultKnabenAPIURL), client)
 		},
 	},
 	{
 		name: "torrentclaw",
 		new: func(client *http.Client) provider.Provider {
 			return torrentclaw.NewClient(
-				TORRENTCLAW_API_URL,
+				envString(envTorrentClawAPIURL, defaultTorrentClawURL),
 				client,
-				torrentclaw.WithAPIKey(envString(EnvTorrentClawAPIKey, "")),
+				torrentclaw.WithAPIKey(envString(envTorrentClawAPIKey, "")),
 			)
 		},
 	},
 }
 
-func newTorrentSearcher(client *http.Client, providerNames ...string) (domain.TorrentSearcher, error) {
+func newTorrentSearcher(client *http.Client, providerNames ...string) (*search.Service, error) {
 	providers, err := newSearchProviders(client, providerNames...)
 	if err != nil {
 		return nil, err

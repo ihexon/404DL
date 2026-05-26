@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
+
+	"mvdl/internal/provider"
 )
 
 type TMDBClient struct {
@@ -125,13 +127,13 @@ func (c *TMDBClient) search(ctx context.Context, query string) (tmdbSearchRespon
 
 	httpResp, err := c.httpClient.Do(req)
 	if err != nil {
-		return tmdbSearchResponse{}, fmt.Errorf("call tmdb api: %w", err)
+		return tmdbSearchResponse{}, provider.NewRequestError("tmdb", req, err)
 	}
 	defer httpResp.Body.Close()
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
 		msg, _ := io.ReadAll(io.LimitReader(httpResp.Body, 4096))
-		return tmdbSearchResponse{}, fmt.Errorf("tmdb api returned %d: %s", httpResp.StatusCode, strings.TrimSpace(string(msg)))
+		return tmdbSearchResponse{}, provider.NewStatusError("tmdb", req, httpResp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 
 	var out tmdbSearchResponse

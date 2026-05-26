@@ -14,7 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	"mvdl/internal/cryptoutil"
+	"mvdl/internal/crypto"
 	"mvdl/internal/downloader"
 )
 
@@ -113,12 +113,12 @@ func resolveMagnetURL(value string) (string, error) {
 		return value, nil
 	}
 
-	key := envString(MVDL_CRYKEY, "")
+	key := envString(envCryptoKey, "")
 	if key == "" {
-		return "", fmt.Errorf("%s is required to decrypt encrypted magnet URL", MVDL_CRYKEY)
+		return "", fmt.Errorf("%s is required to decrypt encrypted magnet URL", envCryptoKey)
 	}
 
-	decryptor, err := cryptoutil.NewStringEncryptor(key)
+	decryptor, err := crypto.NewStringEncryptor(key)
 	if err != nil {
 		return "", fmt.Errorf("invalid magnetUrl encryption key: %w", err)
 	}

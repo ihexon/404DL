@@ -1,8 +1,8 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
-	"mvdl/internal/domain"
 	"net/http"
 	"strings"
 
@@ -16,13 +16,13 @@ type Config struct {
 	Addr            string
 	PageSize        int
 	HTTPClient      *http.Client
-	MagnetEncryptor domain.StringEncryptor
+	MagnetEncryptor StringEncryptor
 }
 
 type Handler struct {
-	client          domain.TorrentSearcher
+	client          TorrentSearcher
 	pageSize        int
-	magnetEncryptor domain.StringEncryptor
+	magnetEncryptor StringEncryptor
 }
 
 type errorResponse struct {
@@ -34,14 +34,22 @@ type errorDetail struct {
 	Message string `json:"message"`
 }
 
-func NewHandler(client domain.TorrentSearcher, cfg Config) *Handler {
+type TorrentSearcher interface {
+	Search(context.Context, provider.SearchRequest) ([]model.Torrent, error)
+}
+
+type StringEncryptor interface {
+	EncryptString(plaintext string) (string, error)
+}
+
+func NewHandler(client TorrentSearcher, cfg Config) *Handler {
 	pageSize := cfg.PageSize
 	if pageSize <= 0 {
 		pageSize = 50
 	}
 
-	if pageSize > 50 {
-		pageSize = 50
+	if pageSize > 200 {
+		pageSize = 200
 	}
 
 	return &Handler{
