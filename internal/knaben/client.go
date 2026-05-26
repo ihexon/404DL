@@ -17,7 +17,6 @@ import (
 
 const (
 	defaultAPIURL = "https://api.knaben.org/v1"
-	maxPageSize   = 200
 )
 
 type Client struct {
@@ -46,8 +45,6 @@ type SearchRequest struct {
 	Query          string `json:"query"`
 	OrderBy        string `json:"order_by"`
 	OrderDirection string `json:"order_direction"`
-	From           int    `json:"from"`
-	Size           int    `json:"size"`
 	HideUnsafe     bool   `json:"hide_unsafe"`
 	HideXXX        bool   `json:"hide_xxx"`
 }
@@ -82,14 +79,10 @@ func (c *Client) Name() string {
 }
 
 func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
-	size := req.Limit
-	if size <= 0 || size > maxPageSize {
-		size = maxPageSize
-	}
 	log.WithFields(log.Fields{
 		"provider": c.Name(),
 		"query":    req.Query,
-		"size":     size,
+		"sort":     "seeders desc",
 	}).Info("knaben api request prepared")
 
 	hits, err := c.search(ctx, SearchRequest{
@@ -98,8 +91,6 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 		Query:          req.Query,
 		OrderBy:        "seeders",
 		OrderDirection: "desc",
-		From:           0,
-		Size:           size,
 		HideUnsafe:     true,
 		HideXXX:        true,
 	})

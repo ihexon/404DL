@@ -36,6 +36,8 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	if len(a.providers) == 0 {
 		return nil, errors.New("no providers configured")
 	}
+	req.Resolution = NormalizeResolution(req.Resolution)
+
 	log.WithFields(log.Fields{
 		"query":      req.Query,
 		"resolution": req.Resolution,
@@ -128,7 +130,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 }
 
 func filterByResolution(torrents []model.Torrent, resolution string) []model.Torrent {
-	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	resolution = NormalizeResolution(resolution)
 	if resolution == "" {
 		return torrents
 	}
@@ -140,6 +142,10 @@ func filterByResolution(torrents []model.Torrent, resolution string) []model.Tor
 		}
 	}
 	return filtered
+}
+
+func NormalizeResolution(resolution string) string {
+	return strings.ToLower(strings.TrimSpace(resolution))
 }
 
 func dedupe(torrents []model.Torrent) []model.Torrent {
