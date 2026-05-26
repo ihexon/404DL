@@ -1,14 +1,18 @@
 package main
 
 import (
-	"flag"
+	"fmt"
+	"io"
+	"mvdl/internal/domain"
 	"net/http"
+	"net/url"
 	"os"
-	"strconv"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v2"
 
+	"mvdl/internal/cryptoutil"
 	"mvdl/internal/knaben"
 	"mvdl/internal/metadata"
 	"mvdl/internal/provider"
@@ -17,48 +21,188 @@ import (
 	"mvdl/internal/torrentclaw"
 )
 
-func main() {
-	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
+const (
+	MVDL_CRYKEY = "MVDL_CRYKEY"
 
-	listen := flag.String("listen", envString("ADDR", ":8080"), "listen address, for example :8080 or 127.0.0.1:8080")
-	flag.Parse()
+	FlagPageSize   = "page-size"
+	FlagListen     = "listen"
+	FlagResolution = "resolution"
+	FlagAddr       = "addr"
+	FlagTimeout    = "timeout"
+
+	DefaultListenAddr = "127.0.0.1:6567"
+
+	SubCmdQuery  = "query"
+	SubCmdServer = "server"
+
+	KNABEN_API_URL      = "https://api.knaben.org/v1"
+	TORRENTCLAW_API_URL = "https://torrentclaw.com/api/v1"
+)
+
+func main() {
+	logrus.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
+
+	app := &cli.App{
+		Name:  "mvdl",
+		Usage: "movie torrent search utility",
+		Commands: []*cli.Command{
+			{
+				Name:  SubCmdServer,
+				Usage: "start movie search API server",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  FlagListen,
+						Usage: "listen address",
+						Value: DefaultListenAddr,
+					},
+					&cli.IntFlag{
+						Name:  FlagPageSize,
+						Usage: "return page size, default 50",
+						Value: 50,
+					},
+					&cli.IntFlag{
+						Name:  FlagTimeout,
+						Usage: "upstream timeout, default 8s",
+						Value: 8,
+					},
+				},
+				Action: runServer,
+			},
+			{
+				Name:      SubCmdQuery,
+				Usage:     "query a running movie search API server",
+				UsageText: "mvdl query <movie name> --resolution 1080p [--addr http://127.0.0.1:8080]",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     FlagResolution,
+						Usage:    "video resolution, for example 1080p or 2160p",
+						Required: true,
+					},
+					&cli.StringFlag{
+						Name:  FlagAddr,
+						Usage: "movie search API base URL",
+						Value: "http://" + DefaultListenAddr,
+					},
+					&cli.IntFlag{
+						Name:  FlagTimeout,
+						Usage: "search timeout, default 8s",
+						Value: 8,
+					},
+				},
+				Action: runSearch,
+			},
+		},
+	}
+
+	if err := app.Run(os.Args); err != nil {
+		logrus.WithError(err).Fatal("command failed")
+	}
+}
+
+func runServer(c *cli.Context) error {
+	var magnetEncryptor domain.StringEncryptor
+
+	if key := envString(MVDL_CRYKEY, ""); key != "" {
+		encryptor, err := cryptoutil.NewStringEncryptor(key)
+		if err != nil {
+			return fmt.Errorf("invalid magnetUrl encryption key: %w", err)
+		}
+
+		magnetEncryptor = encryptor
+	} else {
+		logrus.Warnf("magnetUrl encryption disabled: environment var %s is not set", MVDL_CRYKEY)
+		magnetEncryptor = nil
+	}
 
 	cfg := server.Config{
-		Addr:       *listen,
-		PageSize:   envInt("PAGE_SIZE", 200),
-		HTTPClient: &http.Client{Timeout: envDuration("UPSTREAM_TIMEOUT", 8*time.Second)},
+		Addr:     c.String(FlagListen),
+		PageSize: c.Int(FlagPageSize),
+		HTTPClient: &http.Client{
+			Timeout: time.Duration(c.Int(FlagTimeout)) * time.Second,
+		},
+		MagnetEncryptor: magnetEncryptor,
 	}
 
-	providers := []provider.Provider{
-		knaben.NewClient(envString("KNABEN_API_URL", "https://api.knaben.org/v1"), cfg.HTTPClient),
-		torrentclaw.NewClient(envString("TORRENTCLAW_API_URL", "https://torrentclaw.com/api/v1"), cfg.HTTPClient),
-	}
-	aggregator := provider.NewAggregator(providers...)
-	resolver := metadata.Resolver(metadata.NoopResolver{})
+	aggregator := provider.NewAggregator([]provider.Provider{
+		knaben.NewClient(KNABEN_API_URL, cfg.HTTPClient),
+		torrentclaw.NewClient(TORRENTCLAW_API_URL, cfg.HTTPClient),
+	}...)
+
+	var resolver metadata.Resolver
+
+	// if user set MVDL_TMDB_APIKEY, using tmdb resolver
 	if apiKey := envString("MVDL_TMDB_APIKEY", ""); apiKey != "" {
-		log.WithFields(log.Fields{
-			"api_key": maskAPIKey(apiKey),
-			"api_url": envString("TMDB_API_URL", "https://api.themoviedb.org/3"),
-		}).Info("tmdb resolver enabled")
 		resolver = metadata.NewTMDBClient(metadata.TMDBOptions{
-			APIURL:     envString("TMDB_API_URL", "https://api.themoviedb.org/3"),
+			APIURL:     "https://api.themoviedb.org/3",
 			APIKey:     apiKey,
 			HTTPClient: cfg.HTTPClient,
 		})
 	} else {
-		log.Info("tmdb resolver disabled: MVDL_TMDB_APIKEY is not set")
+		logrus.Warnf("tmdb resolver disabled: MVDL_TMDB_APIKEY is not set")
 	}
-	searcher := search.NewService(resolver, aggregator)
-	handler := server.NewHandler(searcher, cfg)
 
-	log.WithFields(log.Fields{
-		"listen":  cfg.Addr,
-		"limit":   cfg.PageSize,
-		"timeout": cfg.HTTPClient.Timeout.String(),
+	handler := server.NewHandler(search.NewService(resolver, aggregator), cfg)
+
+	logrus.WithFields(logrus.Fields{
+		"listen":   cfg.Addr,
+		"pageSize": cfg.PageSize,
+		"timeout":  cfg.HTTPClient.Timeout.String(),
 	}).Info("server listening")
+
 	if err := http.ListenAndServe(cfg.Addr, handler.Routes()); err != nil {
-		log.WithError(err).Fatal("server stopped")
+		return fmt.Errorf("server stopped: %w", err)
 	}
+
+	return nil
+}
+
+func runSearch(c *cli.Context) error {
+	searchName := c.Args().First()
+	if searchName == "" {
+		return fmt.Errorf("movie name is required")
+	}
+
+	baseURL, err := url.Parse(c.String("addr"))
+	if err != nil {
+		return fmt.Errorf("parse addr: %w", err)
+	}
+	baseURL.Path = "/v1/t"
+	query := baseURL.Query()
+	query.Set("search", searchName)
+	query.Set("resolution", c.String("resolution"))
+	baseURL.RawQuery = query.Encode()
+
+	client := &http.Client{
+		Timeout: time.Duration(c.Int(FlagTimeout)) * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, baseURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("build search request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "mvdl/1.0")
+
+	logrus.WithFields(logrus.Fields{
+		"addr":       c.String("addr"),
+		"search":     searchName,
+		"resolution": c.String("resolution"),
+	}).Info("search request started")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("call search API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("search API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
+		return fmt.Errorf("write search response: %w", err)
+	}
+	fmt.Fprintln(os.Stdout)
+	return nil
 }
 
 func envString(name, fallback string) string {
@@ -66,37 +210,4 @@ func envString(name, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func envInt(name string, fallback int) int {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return fallback
-	}
-
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return fallback
-	}
-	return n
-}
-
-func envDuration(name string, fallback time.Duration) time.Duration {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return fallback
-	}
-
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return fallback
-	}
-	return d
-}
-
-func maskAPIKey(value string) string {
-	if len(value) <= 4 {
-		return "****"
-	}
-	return value[:len(value)-4] + "****"
 }
