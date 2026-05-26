@@ -27,15 +27,15 @@ func runSearch(c *cli.Context) error {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"search":     searchName,
-		"resolution": c.String(FlagResolution),
-		"providers":  providerNames,
+		"search":    searchName,
+		"filter":    c.String(FlagFilter),
+		"providers": providerNames,
 	}).Info("search request started")
 
 	hits, err := searcher.Search(c.Context, provider.SearchRequest{
-		Query:      searchName,
-		Resolution: c.String(FlagResolution),
-		Limit:      c.Int(FlagPageSize),
+		Query:  searchName,
+		Filter: c.String(FlagFilter),
+		Limit:  c.Int(FlagPageSize),
 	})
 	if err != nil {
 		return fmt.Errorf("search torrents: %w", err)

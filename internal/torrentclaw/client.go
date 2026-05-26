@@ -89,13 +89,13 @@ type torrentInfo struct {
 
 func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
 	log.WithFields(log.Fields{
-		"provider":   c.Name(),
-		"query":      req.Query,
-		"resolution": req.Resolution,
-		"sort":       "seeders",
-		"auth":       c.apiKey != "",
+		"provider": c.Name(),
+		"query":    req.Query,
+		"filter":   req.Filter,
+		"sort":     "seeders",
+		"auth":     c.apiKey != "",
 	}).Info("torrentclaw api request prepared")
-	resp, err := c.searchPage(ctx, req.Query, req.Resolution)
+	resp, err := c.searchPage(ctx, req.Query)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (c *Client) logAuthNotice(resp searchResponse) {
 	}).Warn("torrentclaw api key may not be accepted")
 }
 
-func (c *Client) searchPage(ctx context.Context, query, resolution string) (searchResponse, error) {
+func (c *Client) searchPage(ctx context.Context, query string) (searchResponse, error) {
 	u, err := url.Parse(c.apiURL + "/search")
 	if err != nil {
 		return searchResponse{}, fmt.Errorf("build torrentclaw url: %w", err)
@@ -130,7 +130,6 @@ func (c *Client) searchPage(ctx context.Context, query, resolution string) (sear
 
 	values := u.Query()
 	values.Set("q", query)
-	values.Set("quality", resolution)
 	values.Set("sort", "seeders")
 	u.RawQuery = values.Encode()
 

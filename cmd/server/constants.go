@@ -17,7 +17,7 @@ const (
 	FlagPageSize             = "page-size"
 	FlagListen               = "listen"
 	FlagProvider             = "provider"
-	FlagResolution           = "resolution"
+	FlagFilter               = "filter"
 	FlagTimeout              = "timeout"
 	FlagSaveTo               = "save-to"
 	FlagConnections          = "connections"
