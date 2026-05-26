@@ -4,8 +4,10 @@ import "github.com/urfave/cli/v2"
 
 func newApp() *cli.App {
 	return &cli.App{
-		Name:  "mvdl",
-		Usage: "movie torrent search utility",
+		Name:   "mvdl",
+		Usage:  "movie torrent search utility",
+		Action: runServer,
+		Flags:  serverFlags(),
 		Commands: []*cli.Command{
 			newServerCommand(),
 			newQueryCommand(),
@@ -16,49 +18,53 @@ func newApp() *cli.App {
 
 func newServerCommand() *cli.Command {
 	return &cli.Command{
-		Name:  SubCmdServer,
-		Usage: "start movie search API server",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:  FlagListen,
-				Usage: "listen address",
-				Value: DefaultListenAddr,
-			},
-			&cli.IntFlag{
-				Name:  FlagPageSize,
-				Usage: "return page size, default 50",
-				Value: 50,
-			},
-			&cli.IntFlag{
-				Name:  FlagTimeout,
-				Usage: "upstream timeout, default 8s",
-				Value: 8,
-			},
-		},
+		Name:   SubCmdServer,
+		Usage:  "start movie search API server",
+		Flags:  serverFlags(),
 		Action: runServer,
+	}
+}
+
+func serverFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringFlag{
+			Name:  FlagListen,
+			Usage: "listen address",
+			Value: DefaultListenAddr,
+		},
+		&cli.IntFlag{
+			Name:  FlagPageSize,
+			Usage: "return page size, default 50",
+			Value: 50,
+		},
+		&cli.IntFlag{
+			Name:  FlagTimeout,
+			Usage: "upstream timeout, default 8s",
+			Value: 8,
+		},
 	}
 }
 
 func newQueryCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdQuery,
-		Usage:     "query a running movie search API server",
-		UsageText: "mvdl query <movie name> --resolution 1080p [--addr http://127.0.0.1:8080]",
+		Usage:     "query torrent providers directly",
+		UsageText: "mvdl query --resolution 1080p <movie name>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     FlagResolution,
 				Usage:    "video resolution, for example 1080p or 2160p",
 				Required: true,
 			},
-			&cli.StringFlag{
-				Name:  FlagAddr,
-				Usage: "movie search API base URL",
-				Value: "http://" + DefaultListenAddr,
-			},
 			&cli.IntFlag{
 				Name:  FlagTimeout,
 				Usage: "search timeout, default 8s",
 				Value: 8,
+			},
+			&cli.IntFlag{
+				Name:  FlagPageSize,
+				Usage: "return page size, default 50",
+				Value: 50,
 			},
 		},
 		Action: runSearch,
@@ -69,7 +75,7 @@ func newDownloadCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdDownload,
 		Usage:     "download a magnet URL or .torrent file",
-		UsageText: "mvdl download <magnet-url|encrypted-magnet-url|torrent-file> --save-to ./downloads",
+		UsageText: "mvdl download --save-to ./downloads <magnet-url|encrypted-magnet-url|torrent-file>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     FlagSaveTo,
