@@ -21,7 +21,10 @@ func runServer(c *cli.Context) error {
 		return err
 	}
 
-	handler := newSearchHandler(cfg)
+	handler, err := newSearchHandler(cfg)
+	if err != nil {
+		return err
+	}
 
 	logrus.WithFields(logrus.Fields{
 		"listen":   cfg.Addr,
@@ -35,8 +38,12 @@ func runServer(c *cli.Context) error {
 	return nil
 }
 
-func newSearchHandler(cfg server.Config) *server.Handler {
-	return server.NewHandler(newTorrentSearcher(cfg.HTTPClient), cfg)
+func newSearchHandler(cfg server.Config, providerNames ...string) (*server.Handler, error) {
+	searcher, err := newTorrentSearcher(cfg.HTTPClient, providerNames...)
+	if err != nil {
+		return nil, err
+	}
+	return server.NewHandler(searcher, cfg), nil
 }
 
 func newServerConfig(c *cli.Context) (server.Config, error) {

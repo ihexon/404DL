@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"mvdl/internal/domain"
 	"mvdl/internal/knaben"
@@ -10,11 +12,87 @@ import (
 	"mvdl/internal/torrentclaw"
 )
 
-func newTorrentSearcher(client *http.Client) domain.TorrentSearcher {
-	aggregator := provider.NewAggregator([]provider.Provider{
-		knaben.NewClient(KNABEN_API_URL, client),
-		torrentclaw.NewClient(TORRENTCLAW_API_URL, client),
-	}...)
+type providerFactory struct {
+	name string
+	new  func(*http.Client) provider.Provider
+}
 
-	return search.NewService(newMetadataResolver(client), aggregator)
+var providerFactories = []providerFactory{
+	{
+		name: "knaben",
+		new: func(client *http.Client) provider.Provider {
+			return knaben.NewClient(KNABEN_API_URL, client)
+		},
+	},
+	{
+		name: "torrentclaw",
+		new: func(client *http.Client) provider.Provider {
+			return torrentclaw.NewClient(
+				TORRENTCLAW_API_URL,
+				client,
+				torrentclaw.WithAPIKey(envString(EnvTorrentClawAPIKey, "")),
+			)
+		},
+	},
+}
+
+func newTorrentSearcher(client *http.Client, providerNames ...string) (domain.TorrentSearcher, error) {
+	providers, err := newSearchProviders(client, providerNames...)
+	if err != nil {
+		return nil, err
+	}
+
+	aggregator := provider.NewAggregator(providers...)
+	return search.NewService(newMetadataResolver(client), aggregator), nil
+}
+
+func newSearchProviders(client *http.Client, providerNames ...string) ([]provider.Provider, error) {
+	selected := selectedProviderNames(providerNames)
+	out := make([]provider.Provider, 0, len(providerFactories))
+
+	for _, factory := range providerFactories {
+		if len(selected) == 0 {
+			out = append(out, factory.new(client))
+			continue
+		}
+		if _, ok := selected[factory.name]; ok {
+			out = append(out, factory.new(client))
+			delete(selected, factory.name)
+		}
+	}
+
+	if len(selected) > 0 {
+		return nil, fmt.Errorf("unknown provider %q (available: %s)", firstSelectedProvider(selected), strings.Join(availableProviderNames(), ", "))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no providers selected")
+	}
+	return out, nil
+}
+
+func selectedProviderNames(providerNames []string) map[string]struct{} {
+	selected := map[string]struct{}{}
+	for _, providerName := range providerNames {
+		providerName = strings.ToLower(strings.TrimSpace(providerName))
+		if providerName == "" {
+			continue
+		}
+		selected[providerName] = struct{}{}
+	}
+	return selected
+}
+
+func firstSelectedProvider(selected map[string]struct{}) string {
+	for providerName := range selected {
+		return providerName
+	}
+	return ""
+}
+
+func availableProviderNames() []string {
+	names := make([]string, 0, len(providerFactories))
+	for _, factory := range providerFactories {
+		names = append(names, factory.name)
+	}
+	return names
 }
