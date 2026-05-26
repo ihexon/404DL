@@ -49,12 +49,12 @@ func newQueryCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdQuery,
 		Usage:     "query torrent providers directly",
-		UsageText: "mvdl query --resolution 1080p <movie name>",
+		UsageText: "mvdl query [--resolution 1080p] <movie name>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:     FlagResolution,
-				Usage:    "video resolution, for example 1080p or 2160p",
-				Required: true,
+				Name:  FlagResolution,
+				Usage: "video resolution, for example 1080p or 2160p",
+				Value: "1080p",
 			},
 			&cli.IntFlag{
 				Name:  FlagTimeout,

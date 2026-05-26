@@ -56,6 +56,7 @@ type torrentInfo struct {
 	InfoHash     string `json:"infoHash"`
 	RawTitle     string `json:"rawTitle"`
 	Quality      string `json:"quality"`
+	SizeBytes    int64  `json:"sizeBytes"`
 	Seeders      int    `json:"seeders"`
 	Leechers     int    `json:"leechers"`
 	MagnetURL    string `json:"magnetUrl"`
@@ -162,6 +163,7 @@ func (c *Client) flatten(resp searchResponse) []model.Torrent {
 			out = append(out, model.Torrent{
 				Provider:     c.Name(),
 				Title:        firstNonEmpty(torrent.RawTitle, result.Title),
+				Bytes:        torrent.SizeBytes,
 				Date:         torrent.UploadedAt,
 				Details:      details,
 				Hash:         stringPtr(hash),
