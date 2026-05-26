@@ -71,8 +71,11 @@ go run ./cmd/server --help
 Search providers directly:
 
 ```bash
-go run ./cmd/server query --resolution 1080p 真人快打2
+go run ./cmd/server query 真人快打2
 ```
+
+`query` uses `1080p` by default. Pass `--resolution 2160p` before the movie name
+to search another resolution.
 
 Generate an AES-256 key for `MVDL_CRYKEY`:
 
