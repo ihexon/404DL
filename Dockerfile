@@ -22,4 +22,4 @@ COPY --from=build /out/mvdl /usr/local/bin/mvdl
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/mvdl"]
-CMD ["--listen", ":8080"]
+CMD ["server", "--listen", ":8080"]

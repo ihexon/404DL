@@ -1,8 +1,8 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
+	"mvdl/internal/domain"
 	"net/http"
 	"strings"
 
@@ -12,33 +12,35 @@ import (
 	"mvdl/internal/provider"
 )
 
-type TorrentSearcher interface {
-	Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error)
-}
-
 type Config struct {
-	Addr       string
-	PageSize   int
-	HTTPClient *http.Client
+	Addr            string
+	PageSize        int
+	HTTPClient      *http.Client
+	MagnetEncryptor domain.StringEncryptor
 }
 
 type Handler struct {
-	client   TorrentSearcher
-	pageSize int
+	client           domain.TorrentSearcher
+	pageSize         int
+	magnetEncryptor  domain.StringEncryptor
+	encryptMagnetURL bool
 }
 
-func NewHandler(client TorrentSearcher, cfg Config) *Handler {
+func NewHandler(client domain.TorrentSearcher, cfg Config) *Handler {
 	pageSize := cfg.PageSize
 	if pageSize <= 0 {
-		pageSize = 200
+		pageSize = 50
 	}
-	if pageSize > 200 {
-		pageSize = 200
+
+	if pageSize > 50 {
+		pageSize = 50
 	}
 
 	return &Handler{
-		client:   client,
-		pageSize: pageSize,
+		client:           client,
+		pageSize:         pageSize,
+		magnetEncryptor:  cfg.MagnetEncryptor,
+		encryptMagnetURL: cfg.MagnetEncryptor != nil,
 	}
 }
 
@@ -88,13 +90,44 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if h.encryptMagnetURL {
+		encrypted, err := h.encryptMagnets(hits)
+		if err != nil {
+			log.WithError(err).WithFields(fields).Info("torrent magnet encryption failed")
+			writeError(w, http.StatusInternalServerError, "failed to encrypt magnetUrl")
+			return
+		}
+		hits = encrypted
+	}
 
 	log.WithFields(log.Fields{
 		"query":      params.SearchName,
 		"resolution": params.Resolution,
 		"count":      len(hits),
+		"encrypted":  h.encryptMagnetURL,
 	}).Info("torrent search request completed")
 	writeJSON(w, http.StatusOK, hits)
+}
+
+func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, error) {
+	encrypted := make([]model.Torrent, len(hits))
+	copy(encrypted, hits)
+
+	count := 0
+	for i := range encrypted {
+		if encrypted[i].MagnetURL == nil || *encrypted[i].MagnetURL == "" {
+			continue
+		}
+		value, err := h.magnetEncryptor.EncryptString(*encrypted[i].MagnetURL)
+		if err != nil {
+			return nil, err
+		}
+		encrypted[i].MagnetURL = &value
+		count++
+	}
+
+	log.WithField("count", count).Info("magnetUrl fields encrypted")
+	return encrypted, nil
 }
 
 type torrentPathParams struct {

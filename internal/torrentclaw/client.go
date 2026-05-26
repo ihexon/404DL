@@ -56,7 +56,6 @@ type torrentInfo struct {
 	InfoHash     string `json:"infoHash"`
 	RawTitle     string `json:"rawTitle"`
 	Quality      string `json:"quality"`
-	SizeBytes    string `json:"sizeBytes"`
 	Seeders      int    `json:"seeders"`
 	Leechers     int    `json:"leechers"`
 	MagnetURL    string `json:"magnetUrl"`
@@ -159,12 +158,10 @@ func (c *Client) flatten(resp searchResponse) []model.Torrent {
 			hash := torrent.InfoHash
 			magnet := torrent.MagnetURL
 			link := absoluteTorrentURL(torrent.TorrentURL)
-			bytes := parseInt64(torrent.SizeBytes)
 
 			out = append(out, model.Torrent{
 				Provider:     c.Name(),
 				Title:        firstNonEmpty(torrent.RawTitle, result.Title),
-				Bytes:        bytes,
 				Date:         torrent.UploadedAt,
 				Details:      details,
 				Hash:         stringPtr(hash),
@@ -196,14 +193,6 @@ func absoluteTorrentURL(path string) string {
 		return path
 	}
 	return "https://torrentclaw.com" + path
-}
-
-func parseInt64(raw string) int64 {
-	if raw == "" {
-		return 0
-	}
-	n, _ := strconv.ParseInt(raw, 10, 64)
-	return n
 }
 
 func firstNonEmpty(values ...string) string {
