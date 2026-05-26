@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -18,9 +17,6 @@ import (
 
 const (
 	defaultAPIURL = "https://torrentclaw.com/api/v1"
-	maxLimit      = 200
-	pageSize      = 50
-	maxPages      = 4
 )
 
 type Client struct {
@@ -92,49 +88,26 @@ type torrentInfo struct {
 }
 
 func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
-	limit := req.Limit
-	if limit <= 0 || limit > maxLimit {
-		limit = maxLimit
+	log.WithFields(log.Fields{
+		"provider":   c.Name(),
+		"query":      req.Query,
+		"resolution": req.Resolution,
+		"sort":       "seeders",
+		"auth":       c.apiKey != "",
+	}).Info("torrentclaw api request prepared")
+	resp, err := c.searchPage(ctx, req.Query, req.Resolution)
+	if err != nil {
+		return nil, err
 	}
+	c.logAuthNotice(resp)
 
-	pages := (limit + pageSize - 1) / pageSize
-	if pages > maxPages {
-		pages = maxPages
-	}
-
-	var out []model.Torrent
-	for page := 1; page <= pages && len(out) < limit; page++ {
-		log.WithFields(log.Fields{
-			"provider":   c.Name(),
-			"query":      req.Query,
-			"resolution": req.Resolution,
-			"page":       page,
-			"limit":      pageSize,
-			"auth":       c.apiKey != "",
-		}).Info("torrentclaw api page request prepared")
-		resp, err := c.searchPage(ctx, req.Query, req.Resolution, page, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		c.logAuthNotice(resp)
-
-		pageResults := c.flatten(resp)
-		log.WithFields(log.Fields{
-			"provider": c.Name(),
-			"page":     page,
-			"contents": len(resp.Results),
-			"torrents": len(pageResults),
-			"notice":   resp.Notice,
-		}).Info("torrentclaw api page response decoded")
-		out = append(out, pageResults...)
-		if len(resp.Results) == 0 || len(resp.Results) < resp.PageSize {
-			break
-		}
-	}
-	if len(out) > limit {
-		out = out[:limit]
-	}
-
+	out := c.flatten(resp)
+	log.WithFields(log.Fields{
+		"provider": c.Name(),
+		"contents": len(resp.Results),
+		"torrents": len(out),
+		"notice":   resp.Notice,
+	}).Info("torrentclaw api response decoded")
 	return out, nil
 }
 
@@ -149,7 +122,7 @@ func (c *Client) logAuthNotice(resp searchResponse) {
 	}).Warn("torrentclaw api key may not be accepted")
 }
 
-func (c *Client) searchPage(ctx context.Context, query, resolution string, page, limit int) (searchResponse, error) {
+func (c *Client) searchPage(ctx context.Context, query, resolution string) (searchResponse, error) {
 	u, err := url.Parse(c.apiURL + "/search")
 	if err != nil {
 		return searchResponse{}, fmt.Errorf("build torrentclaw url: %w", err)
@@ -159,8 +132,6 @@ func (c *Client) searchPage(ctx context.Context, query, resolution string, page,
 	values.Set("q", query)
 	values.Set("quality", resolution)
 	values.Set("sort", "seeders")
-	values.Set("page", strconv.Itoa(page))
-	values.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = values.Encode()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
