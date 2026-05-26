@@ -11,12 +11,8 @@ import (
 
 	"mvdl/internal/cryptoutil"
 	"mvdl/internal/domain"
-	"mvdl/internal/knaben"
 	"mvdl/internal/metadata"
-	"mvdl/internal/provider"
-	"mvdl/internal/search"
 	"mvdl/internal/server"
-	"mvdl/internal/torrentclaw"
 )
 
 func runServer(c *cli.Context) error {
@@ -25,14 +21,7 @@ func runServer(c *cli.Context) error {
 		return err
 	}
 
-	aggregator := provider.NewAggregator([]provider.Provider{
-		knaben.NewClient(KNABEN_API_URL, cfg.HTTPClient),
-		torrentclaw.NewClient(TORRENTCLAW_API_URL, cfg.HTTPClient),
-	}...)
-	handler := server.NewHandler(
-		search.NewService(newMetadataResolver(cfg.HTTPClient), aggregator),
-		cfg,
-	)
+	handler := newSearchHandler(cfg)
 
 	logrus.WithFields(logrus.Fields{
 		"listen":   cfg.Addr,
@@ -44,6 +33,10 @@ func runServer(c *cli.Context) error {
 		return fmt.Errorf("server stopped: %w", err)
 	}
 	return nil
+}
+
+func newSearchHandler(cfg server.Config) *server.Handler {
+	return server.NewHandler(newTorrentSearcher(cfg.HTTPClient), cfg)
 }
 
 func newServerConfig(c *cli.Context) (server.Config, error) {
