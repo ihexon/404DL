@@ -20,10 +20,18 @@ type Config struct {
 }
 
 type Handler struct {
-	client           domain.TorrentSearcher
-	pageSize         int
-	magnetEncryptor  domain.StringEncryptor
-	encryptMagnetURL bool
+	client          domain.TorrentSearcher
+	pageSize        int
+	magnetEncryptor domain.StringEncryptor
+}
+
+type errorResponse struct {
+	Error errorDetail `json:"error"`
+}
+
+type errorDetail struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func NewHandler(client domain.TorrentSearcher, cfg Config) *Handler {
@@ -37,10 +45,9 @@ func NewHandler(client domain.TorrentSearcher, cfg Config) *Handler {
 	}
 
 	return &Handler{
-		client:           client,
-		pageSize:         pageSize,
-		magnetEncryptor:  cfg.MagnetEncryptor,
-		encryptMagnetURL: cfg.MagnetEncryptor != nil,
+		client:          client,
+		pageSize:        pageSize,
+		magnetEncryptor: cfg.MagnetEncryptor,
 	}
 }
 
@@ -65,17 +72,17 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(params.SearchName) == "" {
 		log.WithFields(fields).Info("rejecting request: missing search")
-		writeError(w, http.StatusBadRequest, "search name is required")
+		writeError(w, http.StatusBadRequest, "bad_request", "search name is required")
 		return
 	}
 	if strings.TrimSpace(params.Resolution) == "" {
 		log.WithFields(fields).Info("rejecting request: missing resolution")
-		writeError(w, http.StatusBadRequest, "resolution is required")
+		writeError(w, http.StatusBadRequest, "bad_request", "resolution is required")
 		return
 	}
 	if len(params.SearchName) > 200 {
 		log.WithFields(fields).Info("rejecting request: search too long")
-		writeError(w, http.StatusBadRequest, "search name is too long")
+		writeError(w, http.StatusBadRequest, "bad_request", "search name is too long")
 		return
 	}
 
@@ -87,14 +94,15 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.WithError(err).WithFields(fields).Info("torrent search request failed")
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, "provider_error", err.Error())
 		return
 	}
-	if h.encryptMagnetURL {
+	encryptMagnetURL := h.magnetEncryptor != nil
+	if encryptMagnetURL {
 		encrypted, err := h.encryptMagnets(hits)
 		if err != nil {
 			log.WithError(err).WithFields(fields).Info("torrent magnet encryption failed")
-			writeError(w, http.StatusInternalServerError, "failed to encrypt magnetUrl")
+			writeError(w, http.StatusInternalServerError, "internal_server_error", "failed to encrypt magnetUrl")
 			return
 		}
 		hits = encrypted
@@ -104,7 +112,7 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 		"query":      params.SearchName,
 		"resolution": params.Resolution,
 		"count":      len(hits),
-		"encrypted":  h.encryptMagnetURL,
+		"encrypted":  encryptMagnetURL,
 	}).Info("torrent search request completed")
 	writeJSON(w, http.StatusOK, hits)
 }
@@ -149,6 +157,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+func writeError(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, errorResponse{
+		Error: errorDetail{
+			Code:    code,
+			Message: msg,
+		},
+	})
 }
