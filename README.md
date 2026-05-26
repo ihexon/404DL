@@ -5,13 +5,13 @@ Small Go API wrapper around torrent search providers.
 ## API
 
 ```text
-GET /v1/t?search={search name}&resolution={resolution}
+GET /v1/t?search={search name}[&filter={keyword}]
 ```
 
 Example:
 
 ```bash
-curl --noproxy '*' 'http://127.0.0.1:6567/v1/t?search=mortal%20kombat%20ii&resolution=2160p'
+curl --noproxy '*' 'http://127.0.0.1:6567/v1/t?search=mortal%20kombat%20ii&filter=2160p'
 ```
 
 Successful responses return normalized torrent records directly. Raw provider
@@ -41,10 +41,10 @@ Errors return a structured JSON error:
 }
 ```
 
-`search` and `resolution` are required. The server searches Knaben with only
-`search`, searches TorrentClaw with `q` and `quality`, then merges provider
-results, filters by resolution, de-duplicates, sorts by seeders descending, and
-returns at most 200 records.
+`search` is required. `filter` is optional and matches result text
+case-insensitively after providers return. Without `filter`, non-video results
+are returned as well. Results are de-duplicated, sorted by seeders descending,
+and capped by page size.
 
 Providers are queried concurrently. If one provider fails, results from the
 other providers are still returned; the request fails only when every provider
@@ -74,8 +74,8 @@ Search providers directly:
 go run ./cmd/server query 真人快打2
 ```
 
-`query` uses `1080p` by default. Pass `--resolution 2160p` before the movie name
-to search another resolution.
+Pass `--filter 1080p` before the search term to filter results by keyword.
+Omit it for unfiltered and non-video searches.
 
 Debug one provider at a time:
 

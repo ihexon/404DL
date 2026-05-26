@@ -73,19 +73,14 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 	params := parseTorrentQuery(r)
 	fields := log.Fields{
-		"method":     r.Method,
-		"path":       r.URL.Path,
-		"query":      params.SearchName,
-		"resolution": params.Resolution,
+		"method": r.Method,
+		"path":   r.URL.Path,
+		"query":  params.SearchName,
+		"filter": params.Filter,
 	}
 	if strings.TrimSpace(params.SearchName) == "" {
 		log.WithFields(fields).Info("rejecting request: missing search")
 		writeError(w, http.StatusBadRequest, "bad_request", "search name is required")
-		return
-	}
-	if strings.TrimSpace(params.Resolution) == "" {
-		log.WithFields(fields).Info("rejecting request: missing resolution")
-		writeError(w, http.StatusBadRequest, "bad_request", "resolution is required")
 		return
 	}
 	if len(params.SearchName) > 200 {
@@ -96,9 +91,9 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 
 	log.WithFields(fields).Info("torrent search request received")
 	hits, err := h.client.Search(r.Context(), provider.SearchRequest{
-		Query:      params.SearchName,
-		Resolution: params.Resolution,
-		Limit:      h.pageSize,
+		Query:  params.SearchName,
+		Filter: params.Filter,
+		Limit:  h.pageSize,
 	})
 	if err != nil {
 		log.WithError(err).WithFields(fields).Info("torrent search request failed")
@@ -117,10 +112,10 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.WithFields(log.Fields{
-		"query":      params.SearchName,
-		"resolution": params.Resolution,
-		"count":      len(hits),
-		"encrypted":  encryptMagnetURL,
+		"query":     params.SearchName,
+		"filter":    params.Filter,
+		"count":     len(hits),
+		"encrypted": encryptMagnetURL,
 	}).Info("torrent search request completed")
 	writeJSON(w, http.StatusOK, hits)
 }
@@ -148,14 +143,14 @@ func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, error) 
 
 type torrentPathParams struct {
 	SearchName string
-	Resolution string
+	Filter     string
 }
 
 func parseTorrentQuery(r *http.Request) torrentPathParams {
 	query := r.URL.Query()
 	return torrentPathParams{
 		SearchName: strings.TrimSpace(query.Get("search")),
-		Resolution: strings.TrimSpace(query.Get("resolution")),
+		Filter:     strings.TrimSpace(query.Get("filter")),
 	}
 }
 

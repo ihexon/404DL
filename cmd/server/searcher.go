@@ -47,10 +47,11 @@ func newTorrentSearcher(client *http.Client, providerNames ...string) (*search.S
 
 func newSearchProviders(client *http.Client, providerNames ...string) ([]provider.Provider, error) {
 	selected := selectedProviderNames(providerNames)
+	filtered := len(selected) > 0
 	out := make([]provider.Provider, 0, len(providerFactories))
 
 	for _, factory := range providerFactories {
-		if len(selected) == 0 {
+		if !filtered {
 			out = append(out, factory.new(client))
 			continue
 		}

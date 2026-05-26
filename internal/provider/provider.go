@@ -14,9 +14,9 @@ import (
 )
 
 type SearchRequest struct {
-	Query      string
-	Resolution string
-	Limit      int
+	Query  string
+	Filter string
+	Limit  int
 }
 
 type Provider interface {
@@ -36,13 +36,13 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	if len(a.providers) == 0 {
 		return nil, errors.New("no providers configured")
 	}
-	req.Resolution = NormalizeResolution(req.Resolution)
+	req.Filter = NormalizeFilter(req.Filter)
 
 	log.WithFields(log.Fields{
-		"query":      req.Query,
-		"resolution": req.Resolution,
-		"limit":      req.Limit,
-		"providers":  len(a.providers),
+		"query":     req.Query,
+		"filter":    req.Filter,
+		"limit":     req.Limit,
+		"providers": len(a.providers),
 	}).Info("provider aggregation started")
 
 	type result struct {
@@ -58,10 +58,10 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 		go func(p Provider) {
 			defer wg.Done()
 			log.WithFields(log.Fields{
-				"provider":   p.Name(),
-				"query":      req.Query,
-				"resolution": req.Resolution,
-				"limit":      req.Limit,
+				"provider": p.Name(),
+				"query":    req.Query,
+				"filter":   req.Filter,
+				"limit":    req.Limit,
 			}).Info("provider search started")
 			torrents, err := p.Search(ctx, req)
 			if err != nil {
@@ -103,7 +103,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	}
 
 	beforeFilter := len(merged)
-	merged = filterByResolution(merged, req.Resolution)
+	merged = filterTorrents(merged, req.Filter)
 	afterFilter := len(merged)
 	merged = dedupe(merged)
 	afterDedupe := len(merged)
@@ -117,7 +117,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 
 	log.WithFields(log.Fields{
 		"query":         req.Query,
-		"resolution":    req.Resolution,
+		"filter":        req.Filter,
 		"before_filter": beforeFilter,
 		"after_filter":  afterFilter,
 		"after_dedupe":  afterDedupe,
@@ -129,23 +129,31 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	return merged, nil
 }
 
-func filterByResolution(torrents []model.Torrent, resolution string) []model.Torrent {
-	resolution = NormalizeResolution(resolution)
-	if resolution == "" {
+func filterTorrents(torrents []model.Torrent, filter string) []model.Torrent {
+	filter = NormalizeFilter(filter)
+	if filter == "" {
 		return torrents
 	}
 
 	filtered := make([]model.Torrent, 0, len(torrents))
 	for _, torrent := range torrents {
-		if strings.EqualFold(torrent.Resolution, resolution) || strings.Contains(strings.ToLower(torrent.Title), resolution) {
+		if torrentMatchesFilter(torrent, filter) {
 			filtered = append(filtered, torrent)
 		}
 	}
 	return filtered
 }
 
-func NormalizeResolution(resolution string) string {
-	return strings.ToLower(strings.TrimSpace(resolution))
+func torrentMatchesFilter(torrent model.Torrent, filter string) bool {
+	return strings.Contains(strings.ToLower(torrent.Title), filter) ||
+		strings.Contains(strings.ToLower(torrent.Resolution), filter) ||
+		strings.Contains(strings.ToLower(torrent.Category), filter) ||
+		strings.Contains(strings.ToLower(torrent.Source), filter) ||
+		strings.Contains(strings.ToLower(torrent.Tracker), filter)
+}
+
+func NormalizeFilter(filter string) string {
+	return strings.ToLower(strings.TrimSpace(filter))
 }
 
 func dedupe(torrents []model.Torrent) []model.Torrent {
