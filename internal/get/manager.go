@@ -771,22 +771,32 @@ func (m *Manager) deleteTaskFiles(t *torrent.Torrent, task downloadTask) error {
 	if file == nil {
 		return fmt.Errorf("file not found")
 	}
-	return removeSavedPath(m.saveTo, file.Path())
+	return removeSavedPaths(m.saveTo, file.Path(), file.Path()+".part")
 }
 
-func removeSavedPath(root, filePath string) error {
+func removeSavedPaths(root string, filePaths ...string) error {
+	for _, filePath := range filePaths {
+		fullPath, err := savedPath(root, filePath)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(fullPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("delete saved file %q: %w", filePath, err)
+		}
+	}
+	return nil
+}
+
+func savedPath(root, filePath string) (string, error) {
 	fullPath := filepath.Join(root, filepath.FromSlash(filePath))
 	rel, err := filepath.Rel(root, fullPath)
 	if err != nil {
-		return fmt.Errorf("resolve saved path: %w", err)
+		return "", fmt.Errorf("resolve saved path: %w", err)
 	}
 	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
-		return fmt.Errorf("refuse to delete outside save directory")
+		return "", fmt.Errorf("refuse to delete outside save directory")
 	}
-	if err := os.Remove(fullPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("delete saved file: %w", err)
-	}
-	return nil
+	return fullPath, nil
 }
 
 func (m *Manager) refreshFiles(id string, t *torrent.Torrent) TorrentItem {
