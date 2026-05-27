@@ -102,6 +102,10 @@ h1 {
   background: #fff;
 }
 
+.torrentItem.downloading .torrentSummary {
+  box-shadow: inset 3px 0 0 #0969da;
+}
+
 .torrentSummary {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto auto;
@@ -128,6 +132,11 @@ h1 {
   width: 28px;
   height: 28px;
   color: #57606a;
+  transition: transform 150ms ease;
+}
+
+.disclosure.open {
+  transform: rotate(90deg);
 }
 
 .torrentBody {
@@ -206,6 +215,17 @@ h1 {
   color: #24292f;
 }
 
+.iconButton:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.iconButton:disabled:hover {
+  border-color: #d0d7de;
+  background: #fff;
+  color: #57606a;
+}
+
 .copyButton.copied {
   border-color: #1a7f37;
   background: #dafbe1;
@@ -240,6 +260,12 @@ h1 {
   color: #1a7f37;
 }
 
+.status.downloading {
+  border-color: #9ec5fe;
+  background: #ddf4ff;
+  color: #0969da;
+}
+
 .status.error,
 .status.unavailable {
   border-color: #ffcecb;
@@ -263,6 +289,12 @@ h1 {
   padding: 14px 16px 16px 54px;
   border-top: 1px solid #d8dee4;
   background: #f6f8fa;
+  animation: fadeSlideIn 200ms ease-out;
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .detailsGrid {
@@ -326,6 +358,13 @@ h1 {
   flex: 0 0 auto;
   color: #57606a;
   font-size: 12px;
+}
+
+.detailBoxActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .detailBoxBody {
@@ -408,7 +447,7 @@ h1 {
 }
 
 .codeBlock pre,
-.assetURL {
+.assetPath {
   margin: 0;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
@@ -476,14 +515,11 @@ h1 {
   height: 11px;
   border-radius: 2px;
   background: #ebedf0;
+  transition: background-color 300ms ease;
 }
 
 .pieceCell.complete {
   background: #2da44e;
-}
-
-.pieceCell.active {
-  background: #0969da;
 }
 
 .pieceCell.hashing {
@@ -548,6 +584,30 @@ h1 {
   width: 100%;
 }
 
+.fileToolbar {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #d8dee4;
+  background: #f6f8fa;
+}
+
+.selectionMeta {
+  color: #57606a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bulkActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .assetRow {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -555,16 +615,35 @@ h1 {
   padding: 10px;
 }
 
+.assetRow.selected {
+  background: #f6f8fa;
+}
+
 .assetRow + .assetRow {
   border-top: 1px solid #d8dee4;
 }
 
-.assetIcon {
+.assetSelect {
   display: inline-flex;
   align-items: flex-start;
   justify-content: center;
   padding-top: 2px;
-  color: #57606a;
+}
+
+.selectControl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.selectControl input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #0969da;
+  cursor: pointer;
 }
 
 .assetBody {
@@ -580,12 +659,64 @@ h1 {
 }
 
 .assetMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 3px;
   color: #57606a;
   font-size: 12px;
 }
 
-.assetURL {
+.statePill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 6px;
+  border: 1px solid #d0d7de;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.statePill.downloading {
+  border-color: #9ec5fe;
+  background: #ddf4ff;
+  color: #0969da;
+}
+
+.statePill.paused,
+.statePill.canceled,
+.statePill.complete {
+  border-color: #d0d7de;
+  background: #f6f8fa;
+  color: #57606a;
+}
+
+.statePill.complete {
+  border-color: #a6e3b7;
+  background: #dafbe1;
+  color: #1a7f37;
+}
+
+.statePill.cached {
+  border-color: #d0d7de;
+  background: #f6f8fa;
+  color: #57606a;
+}
+
+.statePill.paused {
+  border-color: #d4a72c;
+  background: #fff8c5;
+  color: #7d4e00;
+}
+
+.statePill.canceled {
+  border-color: #ffcecb;
+  background: #ffebe9;
+  color: #cf222e;
+}
+
+.assetPath {
   margin-top: 8px;
   padding: 7px 8px;
   border: 1px solid #d8dee4;
@@ -647,6 +778,15 @@ h1 {
 
   .assetRow {
     grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .fileToolbar {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .bulkActions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
   }
 
   .assetActions {

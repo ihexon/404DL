@@ -9,8 +9,8 @@ GOARCH ?= $(shell $(GO) env GOARCH)
 CGO_ENABLED ?= 0
 LDFLAGS ?= -s -w
 NPM ?= npm
-WEB_DIR ?= web/httpfs
-WEB_STATIC_DIR ?= internal/httpfs/static
+WEB_DIR ?= web/get
+WEB_STATIC_DIR ?= internal/get/static
 BIN_PATH := $(BUILD_DIR)/$(BINARY)
 
 .PHONY: build binary clean clean-binary clean-web web web-deps
