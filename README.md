@@ -53,13 +53,13 @@ fails or no providers are configured.
 ## Run
 
 ```bash
-go run ./cmd/server
+go run ./cmd/server server
 ```
 
 Configure the listen address:
 
 ```bash
-go run ./cmd/server --listen :18080
+go run ./cmd/server server --listen :18080
 ```
 
 Help:
@@ -88,64 +88,6 @@ Repeat `--provider` to query a selected set:
 ```bash
 go run ./cmd/server query --provider knaben --provider torrentclaw 真人快打2
 ```
-
-Generate an AES-256 key for `MVDL_CRYKEY`:
-
-```bash
-go run ./cmd/server gen-key
-```
-
-Download a magnet URL:
-
-```bash
-go run ./cmd/server download --save-to ./downloads 'magnet:?xt=urn:btih:...'
-```
-
-Download a `.torrent` file:
-
-```bash
-go run ./cmd/server download --save-to ./downloads ./movie.torrent
-```
-
-Download an encrypted `magnetUrl` returned by the API:
-
-```bash
-MVDL_CRYKEY=your-32-byte-key go run ./cmd/server download --save-to ./downloads 'encrypted-magnet-url'
-```
-
-`download` treats existing local files ending in `.torrent` as torrent files,
-values starting with `magnet:` as plain magnet URLs, and other values as
-encrypted magnet URLs decrypted with `MVDL_CRYKEY`.
-Download progress reports total size, downloaded size, and current download
-speed every second by default. Use `--progress-interval N` to change the
-interval.
-
-Expose the full anacrolix/torrent status output over HTTP:
-
-```bash
-go run ./cmd/server download --save-to ./downloads --status-listen 127.0.0.1:6570 ./movie.torrent
-curl http://127.0.0.1:6570/status
-```
-
-The downloader uses an aggressive single-download profile by default:
-
-```text
---progress-interval 1
---connections 160
---half-open 80
---total-half-open 240
---peer-high-water 2000
---peer-low-water 200
---dial-rate 80
---max-unverified-mib 512
---peer-request-buffer-mib 4
---piece-hashers 4
-```
-
-These tune anacrolix/torrent peer discovery, peer dialing, concurrent
-connections, piece verification backlog, and hash workers. Leave upload enabled
-for best swarm reciprocity; use `--upload-rate-mib` to cap upload if needed.
-`--no-upload` is available, but can reduce download speed in many swarms.
 
 Environment variables:
 
