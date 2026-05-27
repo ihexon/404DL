@@ -37,10 +37,14 @@ const (
 	FlagUploadRateMiB        = "upload-rate-mib"
 	FlagProgressInterval     = "progress-interval"
 	FlagStatusListen         = "status-listen"
+	FlagMovie                = "movie"
+	FlagTV                   = "tv"
+	FlagLanguage             = "language"
 
 	DefaultListenAddr = "127.0.0.1:6567"
 
 	SubCmdDownload = "download"
 	SubCmdQuery    = "query"
 	SubCmdServer   = "server"
+	SubCmdTMDB     = "tmdb"
 )

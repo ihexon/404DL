@@ -8,13 +8,12 @@ import (
 
 func newApp() *cli.App {
 	return &cli.App{
-		Name:   "mvdl",
-		Usage:  "movie torrent search utility",
-		Action: runServer,
-		Flags:  serverFlags(),
+		Name:  "mvdl",
+		Usage: "movie torrent search utility",
 		Commands: []*cli.Command{
 			newServerCommand(),
 			newQueryCommand(),
+			newTMDBCommand(),
 			newDownloadCommand(),
 		},
 	}
@@ -172,5 +171,34 @@ func newDownloadCommand() *cli.Command {
 			},
 		},
 		Action: runDownload,
+	}
+}
+
+func newTMDBCommand() *cli.Command {
+	return &cli.Command{
+		Name:      SubCmdTMDB,
+		Usage:     "query TMDb and print selected movie or TV details",
+		UsageText: "mvdl tmdb (--movie|--tv) <search term>",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:  FlagMovie,
+				Usage: "search TMDb movies",
+			},
+			&cli.BoolFlag{
+				Name:  FlagTV,
+				Usage: "search TMDb TV series",
+			},
+			&cli.StringFlag{
+				Name:  FlagLanguage,
+				Usage: "TMDb response language",
+				Value: "en-US",
+			},
+			&cli.DurationFlag{
+				Name:  FlagTimeout,
+				Usage: "tmdb request timeout, default 8s",
+				Value: 8 * time.Second,
+			},
+		},
+		Action: runTMDB,
 	}
 }
