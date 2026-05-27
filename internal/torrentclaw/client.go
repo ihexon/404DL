@@ -91,7 +91,6 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	log.WithFields(log.Fields{
 		"provider": c.Name(),
 		"query":    req.Query,
-		"filter":   req.Filter,
 		"sort":     "seeders",
 		"auth":     c.apiKey != "",
 	}).Info("torrentclaw api request prepared")

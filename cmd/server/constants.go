@@ -11,14 +11,20 @@ const (
 	defaultKnabenAPIURL   = "https://api.knaben.org/v1"
 	defaultTorrentClawURL = "https://torrentclaw.com/api/v1"
 
-	FlagPageSize = "page-size"
-	FlagListen   = "listen"
-	FlagProvider = "provider"
-	FlagFilter   = "filter"
-	FlagTimeout  = "timeout"
+	FlagPageSize      = "page-size"
+	FlagListen        = "listen"
+	FlagProvider      = "provider"
+	FlagTimeout       = "timeout"
+	FlagInput         = "input"
+	FlagStdin         = "stdin"
+	FlagDataDir       = "data-dir"
+	FlagTorrentListen = "torrent-listen"
 
-	DefaultListenAddr = "127.0.0.1:6567"
+	DefaultListenAddr        = "127.0.0.1:6567"
+	DefaultHTTPFSAddr        = "127.0.0.1:6570"
+	DefaultTorrentListenAddr = ":42069"
 
+	SubCmdHTTPFS = "httpfs"
 	SubCmdQuery  = "query"
 	SubCmdServer = "server"
 )

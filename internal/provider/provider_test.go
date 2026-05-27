@@ -27,7 +27,7 @@ func TestNewAggregatorCopiesProviderSlice(t *testing.T) {
 	aggregator := NewAggregator(providers...)
 	providers[0] = stubProvider{name: "two", results: []model.Torrent{{Provider: "two", Title: "two 1080p", Seeders: 2}}}
 
-	got, err := aggregator.Search(context.Background(), SearchRequest{Filter: "1080p"})
+	got, err := aggregator.Search(context.Background(), SearchRequest{Query: "one"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,27 +36,7 @@ func TestNewAggregatorCopiesProviderSlice(t *testing.T) {
 	}
 }
 
-func TestAggregatorFiltersCaseInsensitive(t *testing.T) {
-	aggregator := NewAggregator(stubProvider{
-		name: "one",
-		results: []model.Torrent{
-			{Provider: "one", Title: "Ubuntu Linux ISO", Seeders: 10},
-			{Provider: "one", Title: "movie", Resolution: "1080p", Seeders: 8},
-			{Provider: "one", Title: "book", Category: "EBooks", Seeders: 6},
-			{Provider: "one", Title: "other", Seeders: 4},
-		},
-	})
-
-	got, err := aggregator.Search(context.Background(), SearchRequest{Filter: "LINUX"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Title != "Ubuntu Linux ISO" {
-		t.Fatalf("Search() = %+v, want Ubuntu Linux ISO only", got)
-	}
-}
-
-func TestAggregatorDoesNotFilterWhenFilterIsEmpty(t *testing.T) {
+func TestAggregatorReturnsProviderResults(t *testing.T) {
 	aggregator := NewAggregator(stubProvider{
 		name: "one",
 		results: []model.Torrent{

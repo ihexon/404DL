@@ -76,7 +76,6 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 		"method": r.Method,
 		"path":   r.URL.Path,
 		"query":  params.SearchName,
-		"filter": params.Filter,
 	}
 	if strings.TrimSpace(params.SearchName) == "" {
 		log.WithFields(fields).Info("rejecting request: missing search")
@@ -91,9 +90,8 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 
 	log.WithFields(fields).Info("torrent search request received")
 	hits, err := h.client.Search(r.Context(), provider.SearchRequest{
-		Query:  params.SearchName,
-		Filter: params.Filter,
-		Limit:  h.pageSize,
+		Query: params.SearchName,
+		Limit: h.pageSize,
 	})
 	if err != nil {
 		log.WithError(err).WithFields(fields).Info("torrent search request failed")
@@ -113,7 +111,6 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 
 	log.WithFields(log.Fields{
 		"query":     params.SearchName,
-		"filter":    params.Filter,
 		"count":     len(hits),
 		"encrypted": encryptMagnetURL,
 	}).Info("torrent search request completed")
@@ -143,14 +140,12 @@ func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, error) 
 
 type torrentPathParams struct {
 	SearchName string
-	Filter     string
 }
 
 func parseTorrentQuery(r *http.Request) torrentPathParams {
 	query := r.URL.Query()
 	return torrentPathParams{
 		SearchName: strings.TrimSpace(query.Get("search")),
-		Filter:     strings.TrimSpace(query.Get("filter")),
 	}
 }
 
