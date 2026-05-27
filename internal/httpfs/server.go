@@ -96,6 +96,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/torrents/{id}", s.handleGetTorrent)
 	mux.HandleFunc("GET /api/torrents/{id}/files", s.handleGetFiles)
 	mux.HandleFunc("GET /api/torrents/{id}/runtime", s.handleGetRuntime)
+	mux.HandleFunc("GET /api/torrents/{id}/runtime/stream", s.handleStreamRuntime)
 	mux.HandleFunc("GET /d/{id}/{filePath...}", s.handleDownload)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return requestLogger(mux)
@@ -165,6 +166,69 @@ func (s *Server) handleGetRuntime(w http.ResponseWriter, r *http.Request) {
 		"events": len(snapshot.Events),
 	})).Debug("httpfs runtime returned")
 	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) handleStreamRuntime(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+			"id": id,
+		})).Error("httpfs runtime stream failed: response writer cannot flush")
+		writeJSON(w, http.StatusInternalServerError, APIError{Error: "streaming unsupported"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+		"id": id,
+	})).Debug("httpfs runtime stream opened")
+	defer logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+		"id": id,
+	})).Debug("httpfs runtime stream closed")
+
+	if !s.writeRuntimeEvent(w, flusher, r, id) {
+		return
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !s.writeRuntimeEvent(w, flusher, r, id) {
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) writeRuntimeEvent(w http.ResponseWriter, flusher http.Flusher, r *http.Request, id string) bool {
+	snapshot, ok, err := s.manager.RuntimeSnapshot(id)
+	if !ok {
+		writeSSEError(w, "torrent not found")
+		flusher.Flush()
+		return false
+	}
+	if err != nil {
+		writeSSEError(w, err.Error())
+		flusher.Flush()
+		return false
+	}
+	if err := writeSSE(w, "runtime", snapshot); err != nil {
+		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+			"id": id,
+		})).Warn("httpfs runtime stream write failed")
+		return false
+	}
+	flusher.Flush()
+	return true
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -282,6 +346,24 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = encoder.Encode(value)
 }
 
+func writeSSE(w http.ResponseWriter, event string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeSSEError(w http.ResponseWriter, message string) {
+	_ = writeSSE(w, "runtime_error", APIError{Error: message})
+}
+
 type responseRecorder struct {
 	http.ResponseWriter
 	status int
@@ -307,6 +389,15 @@ func (r *responseRecorder) Write(data []byte) (int, error) {
 
 func (r *responseRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
+}
+
+func (r *responseRecorder) Flush() {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func requestLogger(next http.Handler) http.Handler {
