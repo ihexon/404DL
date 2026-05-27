@@ -16,14 +16,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const maxRuntimeEvents = 160
+const (
+	maxRuntimeEvents      = 160
+	maxPieceSourceHistory = 4
+)
 
 type RuntimeSnapshot struct {
 	ID      string                `json:"id"`
 	Updated string                `json:"updated"`
 	Summary RuntimeSummary        `json:"summary"`
 	Peers   []RuntimePeer         `json:"peers"`
-	Pieces  []RuntimePieceRun     `json:"pieces"`
+	Pieces  []RuntimePiece        `json:"pieces"`
 	DHT     []RuntimeDHTServer    `json:"dht"`
 	Events  []RuntimeTorrentEvent `json:"events"`
 }
@@ -69,16 +72,24 @@ type RuntimePeer struct {
 	SupportsEncryption  bool    `json:"supportsEncryption"`
 }
 
-type RuntimePieceRun struct {
-	Start      int    `json:"start"`
-	End        int    `json:"end"`
-	Length     int    `json:"length"`
-	State      string `json:"state"`
-	Complete   bool   `json:"complete"`
-	Partial    bool   `json:"partial"`
-	Hashing    bool   `json:"hashing"`
-	QueuedHash bool   `json:"queuedHash"`
-	Priority   string `json:"priority"`
+type RuntimePiece struct {
+	Index      int                `json:"index"`
+	State      string             `json:"state"`
+	Complete   bool               `json:"complete"`
+	Partial    bool               `json:"partial"`
+	Hashing    bool               `json:"hashing"`
+	QueuedHash bool               `json:"queuedHash"`
+	Priority   string             `json:"priority"`
+	LastPeer   *RuntimePiecePeer  `json:"lastPeer,omitempty"`
+	Peers      []RuntimePiecePeer `json:"peers"`
+}
+
+type RuntimePiecePeer struct {
+	Address string `json:"address"`
+	Source  string `json:"source,omitempty"`
+	Network string `json:"network,omitempty"`
+	Client  string `json:"client,omitempty"`
+	Updated string `json:"updated"`
 }
 
 type RuntimeDHTServer struct {
@@ -110,13 +121,15 @@ type RuntimeTorrentEvent struct {
 }
 
 type runtimeCollector struct {
-	mu     sync.Mutex
-	events map[string][]RuntimeTorrentEvent
+	mu           sync.Mutex
+	events       map[string][]RuntimeTorrentEvent
+	pieceSources map[string]map[int][]RuntimePiecePeer
 }
 
 func newRuntimeCollector() *runtimeCollector {
 	return &runtimeCollector{
-		events: make(map[string][]RuntimeTorrentEvent),
+		events:       make(map[string][]RuntimeTorrentEvent),
+		pieceSources: make(map[string]map[int][]RuntimePiecePeer),
 	}
 }
 
@@ -150,7 +163,7 @@ func (c *runtimeCollector) snapshot(id string, client *torrent.Client, t *torren
 		Updated: time.Now().Format(time.RFC3339),
 		Summary: torrentSummary(client, t, len(knownSwarm)),
 		Peers:   torrentPeers(t, knownSwarm),
-		Pieces:  torrentPieceRuns(t),
+		Pieces:  c.torrentPieces(t),
 		DHT:     dhtServers(client),
 		Events:  c.eventsFor(t.InfoHash().HexString()),
 	}
@@ -163,7 +176,7 @@ func (s *RuntimeSnapshot) normalize() {
 		s.Peers = []RuntimePeer{}
 	}
 	if s.Pieces == nil {
-		s.Pieces = []RuntimePieceRun{}
+		s.Pieces = []RuntimePiece{}
 	}
 	if s.DHT == nil {
 		s.DHT = []RuntimeDHTServer{}
@@ -212,7 +225,9 @@ func (c *runtimeCollector) receivedUsefulData(event torrent.ReceivedUsefulDataEv
 	pe.Piece = intPtr(event.Message.Index.Int())
 	pe.Begin = intPtr(event.Message.Begin.Int())
 	pe.Length = intPtr(len(event.Message.Piece))
-	c.append(peer.Torrent().InfoHash().HexString(), pe)
+	infoHash := peer.Torrent().InfoHash().HexString()
+	c.recordPiecePeer(infoHash, event.Message.Index.Int(), piecePeer(peer))
+	c.append(infoHash, pe)
 }
 
 func (c *runtimeCollector) receivedRequested(event torrent.PeerMessageEvent) {
@@ -281,6 +296,47 @@ func (c *runtimeCollector) eventsFor(infoHash string) []RuntimeTorrentEvent {
 	return out
 }
 
+func (c *runtimeCollector) pieceSourcesFor(infoHash string) map[int][]RuntimePiecePeer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	sources := c.pieceSources[infoHash]
+	out := make(map[int][]RuntimePiecePeer, len(sources))
+	for piece, peers := range sources {
+		copied := make([]RuntimePiecePeer, len(peers))
+		copy(copied, peers)
+		out[piece] = copied
+	}
+	return out
+}
+
+func (c *runtimeCollector) recordPiecePeer(infoHash string, piece int, peer RuntimePiecePeer) {
+	if infoHash == "" || piece < 0 || peer.Address == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	pieces := c.pieceSources[infoHash]
+	if pieces == nil {
+		pieces = make(map[int][]RuntimePiecePeer)
+		c.pieceSources[infoHash] = pieces
+	}
+
+	peers := pieces[piece]
+	next := []RuntimePiecePeer{peer}
+	for _, existing := range peers {
+		if existing.Address == peer.Address {
+			continue
+		}
+		next = append(next, existing)
+		if len(next) >= maxPieceSourceHistory {
+			break
+		}
+	}
+	pieces[piece] = next
+}
+
 func (c *runtimeCollector) append(infoHash string, event RuntimeTorrentEvent) {
 	if infoHash == "" {
 		return
@@ -298,6 +354,24 @@ func (c *runtimeCollector) append(infoHash string, event RuntimeTorrentEvent) {
 		events = append([]RuntimeTorrentEvent(nil), events[len(events)-maxRuntimeEvents:]...)
 	}
 	c.events[infoHash] = events
+}
+
+func piecePeer(peer *torrent.Peer) RuntimePiecePeer {
+	out := RuntimePiecePeer{
+		Address: peerAddress(peer),
+		Source:  peerSource(peer),
+		Network: peerNetwork(peer),
+		Updated: time.Now().Format(time.RFC3339),
+	}
+	if peer == nil {
+		return out
+	}
+	if pc, ok := peer.TryAsPeerConn(); ok {
+		if clientName, ok := pc.PeerClientName.Load().(string); ok {
+			out.Client = strings.TrimSpace(clientName)
+		}
+	}
+	return out
 }
 
 func peerEvent(eventType string, peer *torrent.Peer) RuntimeTorrentEvent {
@@ -429,27 +503,38 @@ func activePeers(t *torrent.Torrent) []RuntimePeer {
 	return peers
 }
 
-func torrentPieceRuns(t *torrent.Torrent) []RuntimePieceRun {
+func (c *runtimeCollector) torrentPieces(t *torrent.Torrent) []RuntimePiece {
 	if t.Info() == nil {
 		return nil
 	}
 	runs := t.PieceStateRuns()
-	out := make([]RuntimePieceRun, 0, len(runs))
-	start := 0
+	out := make([]RuntimePiece, 0, int(t.NumPieces()))
+	index := 0
+	infoHash := t.InfoHash().HexString()
+	pieceSources := c.pieceSourcesFor(infoHash)
 	for _, run := range runs {
-		end := start + run.Length - 1
-		out = append(out, RuntimePieceRun{
-			Start:      start,
-			End:        end,
-			Length:     run.Length,
-			State:      pieceRunState(run),
-			Complete:   run.Complete,
-			Partial:    run.Partial,
-			Hashing:    run.Hashing,
-			QueuedHash: run.QueuedForHash,
-			Priority:   piecePriority(run.Priority),
-		})
-		start += run.Length
+		for i := 0; i < run.Length; i++ {
+			peers := pieceSources[index]
+			if peers == nil {
+				peers = []RuntimePiecePeer{}
+			}
+			var lastPeer *RuntimePiecePeer
+			if len(peers) > 0 {
+				lastPeer = &peers[0]
+			}
+			out = append(out, RuntimePiece{
+				Index:      index,
+				State:      pieceRunState(run),
+				Complete:   run.Complete,
+				Partial:    run.Partial,
+				Hashing:    run.Hashing,
+				QueuedHash: run.QueuedForHash,
+				Priority:   piecePriority(run.Priority),
+				LastPeer:   lastPeer,
+				Peers:      peers,
+			})
+			index++
+		}
 	}
 	return out
 }

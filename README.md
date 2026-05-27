@@ -1,11 +1,27 @@
 # mvdl
 
-Small Go API wrapper around torrent search providers.
+mvdl is a Go torrent search utility with a local HTTP file browser for selected
+search results.
 
-## API
+It has two main workflows:
+
+- `server` exposes a small JSON search API.
+- `query | httpfs` turns provider search results into a local web UI that can
+  load torrent metadata, expose file download URLs, and show live BitTorrent
+  runtime diagnostics.
+
+## Search API
+
+Start the API server:
+
+```bash
+go run ./cmd/server server
+```
+
+Query torrents:
 
 ```text
-GET /v1/t?search={search name}
+GET /v1/t?search={search term}
 ```
 
 Example:
@@ -14,23 +30,23 @@ Example:
 curl --noproxy '*' 'http://127.0.0.1:6567/v1/t?search=mortal%20kombat%20ii%202160p'
 ```
 
-Successful responses return normalized torrent records directly. Raw provider
-JSON is not returned.
+The response is a normalized JSON array:
 
 ```json
 [
   {
     "provider": "torrentclaw",
     "title": "Example",
-    "hash": "example",
-    "magnetUrl": "magnet:?xt=urn:btih:...",
-    "peers": 10,
-    "seeders": 8
+    "bytes": 123456789,
+    "seeders": 10,
+    "peers": 8,
+    "hash": "40b7f6bffcb215e3577ebe55d1090a0c1ec0c64f",
+    "magnetUrl": "magnet:?xt=urn:btih:..."
   }
 ]
 ```
 
-Errors return a structured JSON error:
+Errors use a structured response:
 
 ```json
 {
@@ -41,66 +57,85 @@ Errors return a structured JSON error:
 }
 ```
 
-`search` is required. Results are de-duplicated, sorted by seeders descending,
-and capped by page size.
+`GET /healthz` returns `{ "status": "ok" }`.
 
-Providers are queried concurrently. If one provider fails, results from the
-other providers are still returned; the request fails only when every provider
-fails or no providers are configured.
+## CLI
 
-## Run
+Run the API server on the default address `127.0.0.1:6567`:
 
 ```bash
 go run ./cmd/server server
 ```
 
-Configure the listen address:
+Change the listen address:
 
 ```bash
 go run ./cmd/server server --listen :18080
 ```
 
-Help:
+Search providers directly and print JSON:
 
 ```bash
-go run ./cmd/server --help
+go run ./cmd/server query "mortal kombat ii 2160p"
 ```
 
-Search providers directly:
+Limit providers while debugging:
 
 ```bash
-go run ./cmd/server query 真人快打2
+go run ./cmd/server query --provider knaben --provider torrentclaw "mortal kombat ii"
 ```
 
-Debug one provider at a time:
+Serve query results through the local httpfs UI:
 
 ```bash
-go run ./cmd/server query --provider torrentclaw 真人快打2
+go run ./cmd/server query "mortal kombat ii" | go run ./cmd/server httpfs --stdin
 ```
 
-Repeat `--provider` to query a selected set:
+Serve saved query results:
 
 ```bash
-go run ./cmd/server query --provider knaben --provider torrentclaw 真人快打2
+go run ./cmd/server httpfs --input results.json
 ```
 
-Serve query results as a local HTTP file index:
+## httpfs UI
 
-```bash
-go run ./cmd/server query 真人快打2 | go run ./cmd/server httpfs --stdin
+`httpfs` listens on `127.0.0.1:6570` by default. It reads query JSON, opens a
+local web UI, and uses anacrolix/torrent to resolve metadata and serve files.
+
+The UI shows:
+
+- Torrent summary, provider, size, seeds, peers, info hash, and magnet link.
+- Files from loaded torrent metadata.
+- Range-capable download URLs under `/d/{id}/{filePath}`.
+- Runtime diagnostics: Peers, DHT, Events, and Pieces.
+- A virtualized piece grid where one box is one real BitTorrent piece from the
+  torrent-level anacrolix state.
+
+Piece hover text shows the piece index, state, priority, and the latest useful
+peer observed for that piece in the current process. A piece can be assembled
+from multiple peers, so this is intentionally reported as the latest useful peer
+rather than the only source.
+
+Runtime endpoints:
+
+```text
+GET /api/torrents
+GET /api/torrents/{id}
+GET /api/torrents/{id}/files
+GET /api/torrents/{id}/runtime
+GET /api/torrents/{id}/runtime/stream
 ```
 
-`httpfs` starts a React web UI on `127.0.0.1:6570` by default. It loads torrent
-metadata on demand, lists torrent files, and exposes Range-capable HTTP download
-URLs for each file. Use `--stdin` to read piped query output,
-`--input results.json` to read saved query output, `--listen` to change the web
-address, and `--data-dir` to choose the torrent cache directory.
+`/runtime/stream` is an SSE stream. It sends live runtime snapshots so the UI
+does not need short-interval polling for torrent diagnostics.
+
+## Configuration
 
 Environment variables:
 
 ```text
 ADDR=127.0.0.1:6567
-PAGE_SIZE=200
+PAGE_SIZE=50
 UPSTREAM_TIMEOUT=8s
 KNABEN_API_URL=https://api.knaben.org/v1
 TORRENTCLAW_API_URL=https://torrentclaw.com/api/v1
@@ -108,14 +143,25 @@ TORRENTCLAW_API_KEY=
 MVDL_CRYKEY=
 ```
 
-`PAGE_SIZE` is capped at 200.
+`PAGE_SIZE` is capped at 200 by the API handler.
 
-Set `TORRENTCLAW_API_KEY` to send `Authorization: Bearer <key>` to TorrentClaw.
-TorrentClaw requires an API key for magnet links and `.torrent` download URLs.
+`TORRENTCLAW_API_KEY` is sent as `Authorization: Bearer <key>` when configured.
+TorrentClaw may require an API key for magnet links and torrent download URLs.
 
-When `MVDL_CRYKEY` is set, every non-empty `magnetUrl` in the JSON response is
-encrypted with AES-256-GCM before it is returned. The key must be exactly 32
-bytes.
+`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server`, non-empty
+`magnetUrl` values are encrypted with AES-256-GCM before being returned. When it
+is set for `httpfs`, encrypted magnet values from saved API results are
+decrypted before metadata loading.
+
+httpfs flags:
+
+```text
+--input          query JSON input file
+--stdin          read query JSON from stdin
+--listen         HTTP listen address, default 127.0.0.1:6570
+--data-dir       torrent data and metadata cache directory
+--torrent-listen BitTorrent listen address, default :42069
+```
 
 ## Docker
 
@@ -125,14 +171,24 @@ Build:
 docker build -t mvdl .
 ```
 
-Run:
+Run the API server:
 
 ```bash
 docker run --rm -p 6567:8080 mvdl
 ```
 
-Configure the listen address inside the container:
+Run on a custom address inside the container:
 
 ```bash
-docker run --rm -p 18080:18080 mvdl --listen :18080
+docker run --rm -p 18080:18080 mvdl server --listen :18080
 ```
+
+## Notes
+
+Search providers are queried concurrently. If one provider fails, mvdl returns
+results from the providers that succeeded. The request fails only when every
+configured provider fails or no provider is configured.
+
+Runtime diagnostics are process-local. Peer events, latest useful piece peers,
+and DHT observations are collected from the running httpfs process and are not a
+historical database.

@@ -54,7 +54,7 @@ type RuntimeSnapshot = {
   updated: string;
   summary: RuntimeSummary;
   peers: RuntimePeer[];
-  pieces: RuntimePieceRun[];
+  pieces: RuntimePiece[];
   dht: RuntimeDHTServer[];
   events: RuntimeTorrentEvent[];
 };
@@ -100,16 +100,24 @@ type RuntimePeer = {
   supportsEncryption: boolean;
 };
 
-type RuntimePieceRun = {
-  start: number;
-  end: number;
-  length: number;
+type RuntimePiece = {
+  index: number;
   state: string;
   complete: boolean;
   partial: boolean;
   hashing: boolean;
   queuedHash: boolean;
   priority: string;
+  lastPeer?: RuntimePiecePeer;
+  peers: RuntimePiecePeer[];
+};
+
+type RuntimePiecePeer = {
+  address: string;
+  source?: string;
+  network?: string;
+  client?: string;
+  updated: string;
 };
 
 type RuntimeDHTServer = {
@@ -153,8 +161,10 @@ class HTTPError extends Error {
 }
 
 const pollIntervalMs = 1000;
-const runtimePollIntervalMs = 1200;
-const maxPieceMapCells = 320;
+const pieceCellSize = 11;
+const pieceCellGap = 3;
+const pieceGridHeight = 260;
+const pieceGridOverscanRows = 4;
 
 const statusLabels: Record<TorrentStatus, string> = {
   unavailable: "Unavailable",
@@ -478,7 +488,7 @@ function useTorrentRuntime(item: TorrentItem): { snapshot: RuntimeSnapshot | nul
 
     let canceled = false;
 
-    async function load() {
+    async function loadInitialSnapshot() {
       try {
         const next = await getJSON<RuntimeSnapshot>(torrentRuntimeURL(item.id));
         if (!canceled) {
@@ -491,16 +501,24 @@ function useTorrentRuntime(item: TorrentItem): { snapshot: RuntimeSnapshot | nul
       }
     }
 
-    void load();
-    const interval = window.setInterval(() => {
-      if (!document.hidden) {
-        void load();
+    void loadInitialSnapshot();
+    const events = new EventSource(torrentRuntimeStreamURL(item.id));
+    events.addEventListener("runtime", (event) => {
+      if (canceled) {
+        return;
       }
-    }, runtimePollIntervalMs);
+      setSnapshot(JSON.parse((event as MessageEvent<string>).data) as RuntimeSnapshot);
+    });
+    events.addEventListener("runtime_error", () => {
+      if (!canceled) {
+        setSnapshot(null);
+      }
+      events.close();
+    });
 
     return () => {
       canceled = true;
-      window.clearInterval(interval);
+      events.close();
     };
   }, [item.hash, item.id, item.magnetUrl, item.status]);
 
@@ -560,94 +578,102 @@ function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
 }
 
 type PieceCell = {
-  start: number;
-  end: number;
-  length: number;
-  state: string;
+  columns: number;
+  rows: number;
+  visible: RuntimePiece[];
+  top: number;
+  height: number;
 };
 
-function PieceMap({ pieces }: { pieces: RuntimePieceRun[] }) {
-  const total = countPieces(pieces);
+function PieceMap({ pieces }: { pieces: RuntimePiece[] }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const [width, setWidth] = useState(0);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const total = pieces.length;
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   if (total === 0) {
     return <PanelEmpty>No piece state</PanelEmpty>;
   }
-  const cells = pieceCells(pieces, total);
-  const title =
-    cells.length === total
-      ? `${total} pieces`
-      : `${cells.length} blocks representing ${total} pieces`;
+  const layout = pieceGridLayout(pieces, total, width, scrollTop);
 
   return (
-    <div className="pieceMap" title={title}>
-      {cells.map((cell) => (
-        <span
-          className={`pieceCell ${cell.state}`}
-          key={`${cell.start}-${cell.end}`}
-          title={`${cell.start}-${cell.end}: ${pieceCellLabel(cell.state)} (${cell.length} pieces)`}
-        />
-      ))}
+    <div
+      className="pieceMap"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      ref={ref}
+      style={{ maxHeight: pieceGridHeight }}
+      title={`${total} real BitTorrent pieces`}
+    >
+      <div className="pieceMapSizer" style={{ height: layout.height }}>
+        <div
+          className="pieceMapRows"
+          style={{
+            gridTemplateColumns: `repeat(${layout.columns}, ${pieceCellSize}px)`,
+            top: layout.top
+          }}
+        >
+          {layout.visible.map((piece) => (
+            <span
+              className={`pieceCell ${pieceVisualState(piece)}`}
+              key={piece.index}
+              title={pieceTitle(piece)}
+            />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
-function pieceCells(pieces: RuntimePieceRun[], total: number): PieceCell[] {
-  const cellCount = Math.min(total, maxPieceMapCells);
-  const cells: PieceCell[] = [];
-  let runIndex = 0;
-  let runStart = 0;
-
-  for (let index = 0; index < cellCount; index++) {
-    const start = Math.floor((index * total) / cellCount);
-    const end = Math.floor(((index + 1) * total) / cellCount) - 1;
-    const length = end - start + 1;
-    const scores = new Map<string, number>();
-
-    while (runIndex < pieces.length && runStart + pieces[runIndex].length <= start) {
-      runStart += pieces[runIndex].length;
-      runIndex++;
-    }
-
-    let cursor = start;
-    let cursorRunIndex = runIndex;
-    let cursorRunStart = runStart;
-    while (cursorRunIndex < pieces.length && cursor <= end) {
-      const run = pieces[cursorRunIndex];
-      const runEnd = cursorRunStart + run.length - 1;
-      const overlap = Math.min(end, runEnd) - cursor + 1;
-      if (overlap > 0) {
-        const state = pieceVisualState(run);
-        scores.set(state, (scores.get(state) ?? 0) + overlap);
-        cursor += overlap;
-      }
-      cursorRunStart += run.length;
-      cursorRunIndex++;
-    }
-
-    cells.push({
-      start,
-      end,
-      length,
-      state: dominantPieceState(scores, length)
-    });
-  }
-  return cells;
+function pieceGridLayout(
+  pieces: RuntimePiece[],
+  total: number,
+  width: number,
+  scrollTop: number
+): PieceCell {
+  const stride = pieceCellSize + pieceCellGap;
+  const columns = Math.max(1, Math.floor((width + pieceCellGap) / stride));
+  const rows = Math.ceil(total / columns);
+  const firstRow = Math.max(0, Math.floor(scrollTop / stride) - pieceGridOverscanRows);
+  const visibleRows = Math.ceil(pieceGridHeight / stride) + pieceGridOverscanRows * 2;
+  const lastRow = Math.min(rows, firstRow + visibleRows);
+  const start = firstRow * columns;
+  const end = Math.min(total, lastRow * columns);
+  return {
+    columns,
+    rows,
+    visible: pieces.slice(start, end),
+    top: firstRow * stride,
+    height: rows * stride
+  };
 }
 
-function countPieces(pieces: RuntimePieceRun[]): number {
-  return pieces.reduce((sum, piece) => sum + piece.length, 0);
-}
-
-function pieceCounts(pieces: RuntimePieceRun[]): { complete: number; total: number } {
+function pieceCounts(pieces: RuntimePiece[]): { complete: number; total: number } {
   return pieces.reduce(
     (counts, piece) => ({
-      complete: counts.complete + (piece.complete ? piece.length : 0),
-      total: counts.total + piece.length
+      complete: counts.complete + (piece.complete ? 1 : 0),
+      total: counts.total + 1
     }),
     { complete: 0, total: 0 }
   );
 }
 
-function pieceVisualState(piece: RuntimePieceRun): string {
+function pieceVisualState(piece: RuntimePiece): string {
   if (piece.complete) {
     return "complete";
   }
@@ -660,22 +686,6 @@ function pieceVisualState(piece: RuntimePieceRun): string {
   return "empty";
 }
 
-function dominantPieceState(scores: Map<string, number>, length: number): string {
-  if ((scores.get("complete") ?? 0) === length) {
-    return "complete";
-  }
-  if ((scores.get("active") ?? 0) > 0) {
-    return "active";
-  }
-  if ((scores.get("hashing") ?? 0) > 0) {
-    return "hashing";
-  }
-  if ((scores.get("complete") ?? 0) > 0) {
-    return "mixed";
-  }
-  return "empty";
-}
-
 function pieceCellLabel(state: string): string {
   switch (state) {
     case "complete":
@@ -684,11 +694,30 @@ function pieceCellLabel(state: string): string {
       return "downloading";
     case "hashing":
       return "checking";
-    case "mixed":
-      return "mixed";
     default:
       return "empty";
   }
+}
+
+function pieceTitle(piece: RuntimePiece): string {
+  const lines = [
+    `Piece ${piece.index}`,
+    `State: ${pieceCellLabel(pieceVisualState(piece))}`,
+    `Priority: ${piece.priority || "none"}`
+  ];
+  if (piece.lastPeer) {
+    lines.push(`Last useful peer: ${piece.lastPeer.address}`);
+    if (piece.lastPeer.client) {
+      lines.push(`Client: ${piece.lastPeer.client}`);
+    }
+    if (piece.lastPeer.source) {
+      lines.push(`Source: ${peerSourceLabel(piece.lastPeer.source)}`);
+    }
+    lines.push(`Updated: ${formatTime(piece.lastPeer.updated)}`);
+  } else {
+    lines.push("Last useful peer: -");
+  }
+  return lines.join("\n");
 }
 
 function RuntimeDHT({ snapshot }: { snapshot: RuntimeSnapshot | null }) {
@@ -1024,6 +1053,10 @@ function torrentFilesURL(id: string): string {
 
 function torrentRuntimeURL(id: string): string {
   return `${torrentURL(id)}/runtime`;
+}
+
+function torrentRuntimeStreamURL(id: string): string {
+  return `${torrentURL(id)}/runtime/stream`;
 }
 
 async function getJSON<T>(url: string): Promise<T> {
