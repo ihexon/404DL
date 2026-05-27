@@ -6,13 +6,10 @@ const (
 	envPageSize           = "PAGE_SIZE"
 	envUpstreamTimeout    = "UPSTREAM_TIMEOUT"
 	envKnabenAPIURL       = "KNABEN_API_URL"
-	envTMDBAPIKey         = "MVDL_TMDB_APIKEY"
-	envTMDBAPIURL         = "TMDB_API_URL"
 	envTorrentClawAPIKey  = "TORRENTCLAW_API_KEY"
 	envTorrentClawAPIURL  = "TORRENTCLAW_API_URL"
 	defaultKnabenAPIURL   = "https://api.knaben.org/v1"
 	defaultTorrentClawURL = "https://torrentclaw.com/api/v1"
-	defaultTMDBAPIURL     = "https://api.themoviedb.org/3"
 
 	FlagPageSize             = "page-size"
 	FlagListen               = "listen"
@@ -37,14 +34,10 @@ const (
 	FlagUploadRateMiB        = "upload-rate-mib"
 	FlagProgressInterval     = "progress-interval"
 	FlagStatusListen         = "status-listen"
-	FlagMovie                = "movie"
-	FlagTV                   = "tv"
-	FlagLanguage             = "language"
 
 	DefaultListenAddr = "127.0.0.1:6567"
 
 	SubCmdDownload = "download"
 	SubCmdQuery    = "query"
 	SubCmdServer   = "server"
-	SubCmdTMDB     = "tmdb"
 )
