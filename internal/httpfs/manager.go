@@ -275,7 +275,7 @@ func (m *Manager) loadMetadata(id, requestID string) {
 		"files":       len(files),
 		"bytes":       totalBytes,
 		"duration_ms": logging.DurationMillis(time.Since(startedAt)),
-	})).Info("httpfs metadata load completed")
+	})).Debug("httpfs metadata load completed")
 }
 
 func (m *Manager) addTorrent(hash, magnetURL string) (*torrent.Torrent, error) {
