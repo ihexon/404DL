@@ -2,6 +2,7 @@ package httpfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -26,14 +27,20 @@ import (
 
 const metadataTimeout = 2 * time.Minute
 
+var errManagerClosed = errors.New("httpfs manager closed")
+
 type Manager struct {
 	baseURL string
 	client  *torrent.Client
 	storage storage.ClientImplCloser
 	runtime *runtimeCollector
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 
-	mu    sync.Mutex
-	items map[string]*TorrentItem
+	mu     sync.Mutex
+	closed bool
+	items  map[string]*TorrentItem
 }
 
 func NewManager(items []TorrentItem, dataDir, listenAddr, torrentListenAddr string) (*Manager, error) {
@@ -72,11 +79,14 @@ func NewManager(items []TorrentItem, dataDir, listenAddr, torrentListenAddr stri
 		return nil, fmt.Errorf("create torrent client: %w", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	manager := &Manager{
 		baseURL: publicBaseURL(listenAddr),
 		client:  client,
 		storage: clientStorage,
 		runtime: runtime,
+		ctx:     ctx,
+		cancel:  cancel,
 		items:   make(map[string]*TorrentItem, len(items)),
 	}
 	for i := range items {
@@ -97,7 +107,18 @@ func NewManager(items []TorrentItem, dataDir, listenAddr, torrentListenAddr stri
 }
 
 func (m *Manager) Close() error {
-	logrus.WithField("items", len(m.items)).Info("httpfs manager shutting down")
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil
+	}
+	m.closed = true
+	items := len(m.items)
+	m.mu.Unlock()
+
+	logrus.WithField("items", items).Info("httpfs manager shutting down")
+	m.cancel()
+	m.wg.Wait()
 	m.client.Close()
 	if err := m.storage.Close(); err != nil {
 		logrus.WithError(err).Error("httpfs storage close failed")
@@ -147,7 +168,8 @@ func (m *Manager) EnsureFiles(ctx context.Context, id string) (TorrentItem, bool
 		})).Warn("httpfs metadata request failed: torrent not found")
 		return TorrentItem{}, false
 	}
-	if item.Status == TorrentStatusIdle {
+	shouldLoadMetadata := item.Status == TorrentStatusIdle && !m.closed
+	if shouldLoadMetadata {
 		item.Status = TorrentStatusLoading
 		item.Error = ""
 		item.Files = nil
@@ -159,16 +181,26 @@ func (m *Manager) EnsureFiles(ctx context.Context, id string) (TorrentItem, bool
 			"has_magnet": item.MagnetURL != "",
 			"status":     item.Status,
 		})).Debug("httpfs metadata loading scheduled")
-		go m.loadMetadata(id, logging.RequestID(ctx))
+		m.wg.Add(1)
 	}
 	out := cloneItem(item)
 	m.mu.Unlock()
+	if shouldLoadMetadata {
+		go func(requestID string) {
+			defer m.wg.Done()
+			m.loadMetadata(id, requestID)
+		}(logging.RequestID(ctx))
+	}
 	return out, true
 }
 
 func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent, bool, error) {
 	startedAt := time.Now()
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil, true, errManagerClosed
+	}
 	item, ok := m.items[id]
 	if !ok {
 		m.mu.Unlock()
@@ -177,6 +209,7 @@ func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent,
 		})).Warn("httpfs torrent lookup failed: torrent not found")
 		return nil, false, nil
 	}
+	m.wg.Add(1)
 	hash := item.Hash
 	magnetURL := item.MagnetURL
 	fields := logging.MergeFields(ctx, logrus.Fields{
@@ -188,6 +221,7 @@ func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent,
 		"status":     item.Status,
 	})
 	m.mu.Unlock()
+	defer m.wg.Done()
 
 	logrus.WithFields(fields).Debug("httpfs torrent metadata wait started")
 	t, err := m.addTorrent(hash, magnetURL)
@@ -199,7 +233,12 @@ func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent,
 	select {
 	case <-ctx.Done():
 		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
-		logrus.WithError(ctx.Err()).WithFields(fields).Warn("httpfs torrent metadata wait canceled")
+		entry := logrus.WithError(ctx.Err()).WithFields(fields)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			entry.Debug("httpfs torrent metadata wait canceled")
+		} else {
+			entry.Warn("httpfs torrent metadata wait canceled")
+		}
 		return nil, true, ctx.Err()
 	case <-t.GotInfo():
 		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
@@ -207,19 +246,29 @@ func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent,
 		fields["files"] = len(t.Files())
 		logrus.WithFields(fields).Debug("httpfs torrent metadata ready")
 		return t, true, nil
+	case <-m.ctx.Done():
+		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+		logrus.WithError(errManagerClosed).WithFields(fields).Debug("httpfs torrent metadata wait canceled")
+		return nil, true, errManagerClosed
 	}
 }
 
 func (m *Manager) RuntimeSnapshot(id string) (RuntimeSnapshot, bool, error) {
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return RuntimeSnapshot{}, true, errManagerClosed
+	}
 	item, ok := m.items[id]
 	if !ok {
 		m.mu.Unlock()
 		return RuntimeSnapshot{}, false, nil
 	}
+	m.wg.Add(1)
 	hash := item.Hash
 	magnetURL := item.MagnetURL
 	m.mu.Unlock()
+	defer m.wg.Done()
 
 	t, err := m.addTorrent(hash, magnetURL)
 	if err != nil {
@@ -230,7 +279,7 @@ func (m *Manager) RuntimeSnapshot(id string) (RuntimeSnapshot, bool, error) {
 
 func (m *Manager) loadMetadata(id, requestID string) {
 	startedAt := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), metadataTimeout)
+	ctx, cancel := context.WithTimeout(m.ctx, metadataTimeout)
 	defer cancel()
 	ctx = logging.WithRequestID(ctx, requestID)
 
@@ -242,11 +291,19 @@ func (m *Manager) loadMetadata(id, requestID string) {
 		return
 	}
 	if err != nil {
+		if isMetadataLoadCanceled(err) {
+			logMetadataLoadCanceled(ctx, id, startedAt, err)
+			return
+		}
 		m.setError(id, err)
 		logrus.WithError(err).WithFields(logging.MergeFields(ctx, logrus.Fields{
 			"id":          id,
 			"duration_ms": logging.DurationMillis(time.Since(startedAt)),
 		})).Error("httpfs metadata load failed")
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		logMetadataLoadCanceled(ctx, id, startedAt, err)
 		return
 	}
 
@@ -264,6 +321,10 @@ func (m *Manager) loadMetadata(id, requestID string) {
 	sort.SliceStable(files, func(i, j int) bool {
 		return files[i].Path < files[j].Path
 	})
+	if err := ctx.Err(); err != nil {
+		logMetadataLoadCanceled(ctx, id, startedAt, err)
+		return
+	}
 
 	m.mu.Lock()
 	if item, ok := m.items[id]; ok {
@@ -276,6 +337,17 @@ func (m *Manager) loadMetadata(id, requestID string) {
 		"bytes":       totalBytes,
 		"duration_ms": logging.DurationMillis(time.Since(startedAt)),
 	})).Debug("httpfs metadata load completed")
+}
+
+func isMetadataLoadCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, errManagerClosed)
+}
+
+func logMetadataLoadCanceled(ctx context.Context, id string, startedAt time.Time, err error) {
+	logrus.WithError(err).WithFields(logging.MergeFields(ctx, logrus.Fields{
+		"id":          id,
+		"duration_ms": logging.DurationMillis(time.Since(startedAt)),
+	})).Debug("httpfs metadata load canceled")
 }
 
 func (m *Manager) addTorrent(hash, magnetURL string) (*torrent.Torrent, error) {
