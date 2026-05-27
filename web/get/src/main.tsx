@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -172,6 +172,7 @@ const pieceCellSize = 11;
 const pieceCellGap = 3;
 const pieceGridHeight = 260;
 const pieceGridOverscanRows = 4;
+const fallbackPieceMapColumns = 32;
 
 function App() {
   const { items, error, inFlightCommands, loadTorrent, runTorrentAction } = useTorrents();
@@ -644,15 +645,21 @@ const PieceMap = React.memo(function PieceMap({
   const pieces = useMemo(() => expandPieceRuns(pieceRuns), [pieceRuns]);
   const total = pieces.length;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = ref.current;
     if (!node) {
       return;
     }
+    const updateWidth = (next: number) => {
+      if (next > 0) {
+        setWidth(next);
+      }
+    };
+    updateWidth(measuredPieceMapWidth(node));
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (entry) {
-        setWidth(entry.contentRect.width);
+        updateWidth(entry.contentRect.width || measuredPieceMapWidth(node));
       }
     });
     observer.observe(node);
@@ -703,7 +710,8 @@ type PieceLayout = {
 
 function pieceGridLayout(pieces: FlatPiece[], total: number, width: number, scrollTop: number): PieceLayout {
   const stride = pieceCellSize + pieceCellGap;
-  const columns = Math.max(1, Math.floor((width + pieceCellGap) / stride));
+  const measuredColumns = Math.floor((width + pieceCellGap) / stride);
+  const columns = Math.max(2, measuredColumns || Math.min(total, fallbackPieceMapColumns));
   const rows = Math.ceil(total / columns);
   const firstRow = Math.max(0, Math.floor(scrollTop / stride) - pieceGridOverscanRows);
   const visibleRows = Math.ceil(pieceGridHeight / stride) + pieceGridOverscanRows * 2;
@@ -711,6 +719,12 @@ function pieceGridLayout(pieces: FlatPiece[], total: number, width: number, scro
   const start = firstRow * columns;
   const end = Math.min(total, lastRow * columns);
   return { columns, rows, visible: pieces.slice(start, end), top: firstRow * stride, height: rows * stride };
+}
+
+function measuredPieceMapWidth(node: HTMLDivElement): number {
+  const style = window.getComputedStyle(node);
+  const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  return Math.max(0, node.clientWidth - padding);
 }
 
 function expandPieceRuns(runs: RuntimePieceRun[]): FlatPiece[] {
