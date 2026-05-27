@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ const (
 	defaultTorrentListenAddr = ":42069"
 	minDownloadReadahead     = 16 * 1024 * 1024
 	maxDownloadReadahead     = 256 * 1024 * 1024
+	slowRequestThreshold     = 2 * time.Second
 )
 
 func Run(ctx context.Context, cfg Config) error {
@@ -93,6 +95,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/torrents", s.handleListTorrents)
 	mux.HandleFunc("GET /api/torrents/{id}", s.handleGetTorrent)
 	mux.HandleFunc("GET /api/torrents/{id}/files", s.handleGetFiles)
+	mux.HandleFunc("GET /api/torrents/{id}/runtime", s.handleGetRuntime)
 	mux.HandleFunc("GET /d/{id}/{filePath...}", s.handleDownload)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return requestLogger(mux)
@@ -102,7 +105,7 @@ func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
 	items := s.manager.List()
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
 		"count": len(items),
-	})).Info("httpfs torrent list returned")
+	})).Debug("httpfs torrent list returned")
 	writeJSON(w, http.StatusOK, items)
 }
 
@@ -120,7 +123,7 @@ func (s *Server) handleGetTorrent(w http.ResponseWriter, r *http.Request) {
 		"id":     id,
 		"status": item.Status,
 		"files":  len(item.Files),
-	})).Info("httpfs torrent returned")
+	})).Debug("httpfs torrent returned")
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -135,8 +138,33 @@ func (s *Server) handleGetFiles(w http.ResponseWriter, r *http.Request) {
 		"id":     id,
 		"status": item.Status,
 		"files":  len(item.Files),
-	})).Info("httpfs torrent files returned")
+	})).Debug("httpfs torrent files returned")
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) handleGetRuntime(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	snapshot, ok, err := s.manager.RuntimeSnapshot(id)
+	if !ok {
+		logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+			"id": id,
+		})).Warn("httpfs runtime get failed: torrent not found")
+		writeJSON(w, http.StatusNotFound, APIError{Error: "torrent not found"})
+		return
+	}
+	if err != nil {
+		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+			"id": id,
+		})).Warn("httpfs runtime get failed")
+		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
+		return
+	}
+	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+		"id":     id,
+		"peers":  len(snapshot.Peers),
+		"events": len(snapshot.Events),
+	})).Debug("httpfs runtime returned")
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -271,6 +299,10 @@ func (r *responseRecorder) Write(data []byte) (int, error) {
 	return n, err
 }
 
+func (r *responseRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
@@ -279,24 +311,45 @@ func requestLogger(next http.Handler) http.Handler {
 
 		recorder := &responseRecorder{ResponseWriter: w}
 		ctx := logging.WithRequestID(r.Context(), requestID)
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			duration := time.Since(startedAt)
+			fields := logging.HTTPRequestFields(r, requestID)
+			fields["status"] = http.StatusInternalServerError
+			fields["bytes"] = recorder.bytes
+			fields["duration_ms"] = logging.DurationMillis(duration)
+			fields["panic"] = fmt.Sprint(recovered)
+			fields["stack"] = string(debug.Stack())
+			logrus.WithFields(fields).Error("httpfs request panicked")
+			if recorder.status == 0 {
+				http.Error(recorder, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+
 		next.ServeHTTP(recorder, r.WithContext(ctx))
 
 		status := recorder.status
 		if status == 0 {
 			status = http.StatusOK
 		}
+		duration := time.Since(startedAt)
 		fields := logging.HTTPRequestFields(r, requestID)
 		fields["status"] = status
 		fields["bytes"] = recorder.bytes
-		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+		fields["duration_ms"] = logging.DurationMillis(duration)
 		entry := logrus.WithFields(fields)
 		switch {
 		case status >= 500:
 			entry.Error("httpfs request completed")
 		case status >= 400:
 			entry.Warn("httpfs request completed")
-		default:
+		case duration >= slowRequestThreshold:
 			entry.Info("httpfs request completed")
+		default:
+			entry.Debug("httpfs request completed")
 		}
 	})
 }

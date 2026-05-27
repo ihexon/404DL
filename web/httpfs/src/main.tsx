@@ -9,8 +9,10 @@ import {
   Download,
   FileText,
   HardDrive,
+  Network,
   Link,
   Magnet,
+  RadioTower,
   Search,
   Users
 } from "lucide-react";
@@ -46,6 +48,97 @@ type TorrentStore = {
   startMetadata: (item: TorrentItem) => void;
 };
 
+type RuntimeSnapshot = {
+  id: string;
+  updated: string;
+  summary: RuntimeSummary;
+  peers: RuntimePeer[];
+  pieces: RuntimePieceRun[];
+  dht: RuntimeDHTServer[];
+  events: RuntimeTorrentEvent[];
+};
+
+type RuntimeSummary = {
+  infoHash?: string;
+  name?: string;
+  metadataReady: boolean;
+  bytesCompleted: number;
+  bytesMissing: number;
+  length: number;
+  totalPeers: number;
+  pendingPeers: number;
+  activePeers: number;
+  connectedSeeders: number;
+  halfOpenPeers: number;
+  piecesComplete: number;
+  numPieces: number;
+  chunksReadUseful: number;
+  chunksReadWasted: number;
+  bytesReadData: number;
+  bytesReadUsefulData: number;
+  bytesWrittenData: number;
+  knownPeers: number;
+  activeHalfOpenAttempts: number;
+};
+
+type RuntimePeer = {
+  address: string;
+  source: string;
+  network?: string;
+  client?: string;
+  peerId?: string;
+  downloadRate: number;
+  uploadRate: number;
+  remotePieceCount: number;
+  bytesReadData: number;
+  bytesReadUsefulData: number;
+  bytesWrittenData: number;
+  chunksReadUseful: number;
+  chunksReadWasted: number;
+  connected: boolean;
+  supportsEncryption: boolean;
+};
+
+type RuntimePieceRun = {
+  start: number;
+  end: number;
+  length: number;
+  state: string;
+  complete: boolean;
+  partial: boolean;
+  hashing: boolean;
+  queuedHash: boolean;
+  priority: string;
+};
+
+type RuntimeDHTServer = {
+  id: string;
+  address: string;
+  nodes: number;
+  goodNodes: number;
+  outstandingTransactions: number;
+  outboundQueriesAttempted: number;
+  successfulOutboundAnnouncePeers: number;
+  badNodes: number;
+};
+
+type RuntimeTorrentEvent = {
+  time: string;
+  type: string;
+  infoHash?: string;
+  peer?: string;
+  source?: string;
+  network?: string;
+  client?: string;
+  piece?: number;
+  begin?: number;
+  length?: number;
+  message?: string;
+  error?: string;
+  dhtQuery?: string;
+  dhtNode?: string;
+};
+
 class HTTPError extends Error {
   readonly status: number;
   readonly body: string;
@@ -59,6 +152,7 @@ class HTTPError extends Error {
 }
 
 const pollIntervalMs = 1000;
+const runtimePollIntervalMs = 1200;
 
 const statusLabels: Record<TorrentStatus, string> = {
   unavailable: "Unavailable",
@@ -285,6 +379,8 @@ function MetaPill({
 }
 
 function TorrentDetails({ item }: { item: TorrentItem }) {
+  const runtime = useTorrentRuntime(item);
+
   return (
     <div className="torrentDetails">
       <section className="detailsSection">
@@ -309,8 +405,189 @@ function TorrentDetails({ item }: { item: TorrentItem }) {
           value={item.magnetUrl || ""}
         />
       </section>
+      <RuntimePanel snapshot={runtime.snapshot} />
       <FilePanel item={item} />
     </div>
+  );
+}
+
+function useTorrentRuntime(item: TorrentItem): { snapshot: RuntimeSnapshot | null } {
+  const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
+
+  useEffect(() => {
+    if (item.status === "unavailable" || (!item.hash && !item.magnetUrl)) {
+      setSnapshot(null);
+      return;
+    }
+
+    let canceled = false;
+
+    async function load() {
+      try {
+        const next = await getJSON<RuntimeSnapshot>(torrentRuntimeURL(item.id));
+        if (!canceled) {
+          setSnapshot(next);
+        }
+      } catch {
+        if (!canceled) {
+          setSnapshot(null);
+        }
+      }
+    }
+
+    void load();
+    const interval = window.setInterval(() => {
+      if (!document.hidden) {
+        void load();
+      }
+    }, runtimePollIntervalMs);
+
+    return () => {
+      canceled = true;
+      window.clearInterval(interval);
+    };
+  }, [item.hash, item.id, item.magnetUrl, item.status]);
+
+  return { snapshot };
+}
+
+function RuntimePanel({ snapshot }: { snapshot: RuntimeSnapshot | null }) {
+  if (!snapshot) {
+    return <div className="panel panelState muted">Runtime pending</div>;
+  }
+
+  return (
+    <section className="runtimePanel">
+      <div className="sectionHeader">
+        <h3>Runtime</h3>
+        <span>{formatTime(snapshot.updated)}</span>
+      </div>
+      <RuntimeSummaryGrid summary={snapshot.summary} />
+      <PieceMap pieces={snapshot.pieces} />
+      <RuntimeDHT servers={snapshot.dht} />
+      <RuntimePeers peers={snapshot.peers} />
+      <RuntimeEvents events={snapshot.events} />
+    </section>
+  );
+}
+
+function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
+  const completed = summary.bytesCompleted;
+  const total = summary.length || completed + summary.bytesMissing;
+  const percent = total > 0 ? (completed / total) * 100 : 0;
+  const progress = summary.metadataReady
+    ? `${formatPercent(percent)} (${formatBytes(completed)})`
+    : "Metadata pending";
+  const pieces = summary.metadataReady
+    ? `${summary.piecesComplete}/${summary.numPieces}`
+    : "Metadata pending";
+
+  return (
+    <div className="runtimeStats">
+      <DetailItem label="Progress" value={progress} />
+      <DetailItem label="Active / Known" value={`${summary.activePeers}/${summary.knownPeers}`} />
+      <DetailItem label="Pending / Half-open" value={`${summary.pendingPeers}/${summary.halfOpenPeers}`} />
+      <DetailItem label="Seeders" value={`${summary.connectedSeeders}`} />
+      <DetailItem label="Pieces" value={pieces} />
+      <DetailItem label="Useful / Wasted" value={`${summary.chunksReadUseful}/${summary.chunksReadWasted}`} />
+      <DetailItem label="Read" value={formatBytes(summary.bytesReadUsefulData)} />
+      <DetailItem label="Written" value={formatBytes(summary.bytesWrittenData)} />
+    </div>
+  );
+}
+
+function PieceMap({ pieces }: { pieces: RuntimePieceRun[] }) {
+  if (pieces.length === 0) {
+    return <div className="panel panelState muted">No piece state</div>;
+  }
+  const total = pieces.reduce((sum, piece) => sum + piece.length, 0);
+  return (
+    <div className="pieceMap" title={`${total} pieces`}>
+      {pieces.map((piece) => (
+        <span
+          className={`pieceRun ${piece.state}`}
+          key={`${piece.start}-${piece.end}-${piece.state}`}
+          style={{ flexGrow: Math.max(piece.length, 1) }}
+          title={`${piece.start}-${piece.end}: ${piece.state}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RuntimeDHT({ servers }: { servers: RuntimeDHTServer[] }) {
+  return (
+    <section className="runtimeSection">
+      <div className="sectionHeader compact">
+        <h3>DHT</h3>
+        <span>{servers.length}</span>
+      </div>
+      {servers.length === 0 ? (
+        <div className="panel panelState muted">DHT unavailable</div>
+      ) : (
+        <div className="compactList">
+          {servers.map((server) => (
+            <div className="compactRow" key={`${server.id}-${server.address}`}>
+              <RadioTower size={15} />
+              <span>{server.address}</span>
+              <span>{server.goodNodes}/{server.nodes} nodes</span>
+              <span>{server.outstandingTransactions} tx</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RuntimePeers({ peers }: { peers: RuntimePeer[] }) {
+  return (
+    <section className="runtimeSection">
+      <div className="sectionHeader compact">
+        <h3>Peers</h3>
+        <span>{peers.length}</span>
+      </div>
+      {peers.length === 0 ? (
+        <div className="panel panelState muted">No peers</div>
+      ) : (
+        <div className="peerTable">
+          {peers.slice(0, 18).map((peer) => (
+            <div className="peerRow" key={`${peer.address}-${peer.network}-${peer.connected}`}>
+              <Network size={15} />
+              <span className="peerAddress">{peer.address}</span>
+              <span>{peer.connected ? peer.network || "peer" : "known"}</span>
+              <span>{peerSourceLabel(peer.source)}</span>
+              <span>{formatBytes(peer.downloadRate)}/s</span>
+              <span>{peer.client || "-"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RuntimeEvents({ events }: { events: RuntimeTorrentEvent[] }) {
+  const recent = events.slice(-12).reverse();
+  return (
+    <section className="runtimeSection">
+      <div className="sectionHeader compact">
+        <h3>Events</h3>
+        <span>{events.length}</span>
+      </div>
+      {recent.length === 0 ? (
+        <div className="panel panelState muted">No events</div>
+      ) : (
+        <div className="eventList">
+          {recent.map((event, index) => (
+            <div className="eventRow" key={`${event.time}-${event.type}-${index}`}>
+              <span>{formatTime(event.time)}</span>
+              <span>{eventLabel(event)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -528,6 +805,10 @@ function torrentFilesURL(id: string): string {
   return `${torrentURL(id)}/files`;
 }
 
+function torrentRuntimeURL(id: string): string {
+  return `${torrentURL(id)}/runtime`;
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   let response: Response;
   try {
@@ -578,6 +859,28 @@ function formatDate(value?: string): string {
   });
 }
 
+function formatTime(value?: string): string {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  return `${value.toFixed(value >= 99.95 ? 0 : 1)}%`;
+}
+
 function formatBytes(value?: number): string {
   if (!value || value <= 0) {
     return "-";
@@ -590,6 +893,45 @@ function formatBytes(value?: number): string {
     unit++;
   }
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function peerSourceLabel(value: string): string {
+  switch (value) {
+    case "Tr":
+      return "tracker";
+    case "Hg":
+      return "dht";
+    case "Ha":
+      return "dht announce";
+    case "X":
+      return "pex";
+    case "I":
+      return "incoming";
+    case "M":
+      return "magnet";
+    case "L":
+      return "local";
+    case "C":
+      return "holepunch";
+    default:
+      return value || "-";
+  }
+}
+
+function eventLabel(event: RuntimeTorrentEvent): string {
+  if (event.type === "chunk_received") {
+    return `${event.peer || "-"} piece ${event.piece} +${event.begin} ${formatBytes(event.length)}`;
+  }
+  if (event.type === "request_sent") {
+    return `request ${event.peer || "-"} piece ${event.piece} ${formatBytes(event.length)}`;
+  }
+  if (event.type === "dht_query") {
+    return `DHT ${event.dhtQuery || "query"} ${event.dhtNode || ""}`.trim();
+  }
+  if (event.error) {
+    return `${event.type}: ${event.error}`;
+  }
+  return [event.type, event.peer, event.client].filter(Boolean).join(" ");
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(
