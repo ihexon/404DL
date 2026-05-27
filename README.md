@@ -5,13 +5,13 @@ Small Go API wrapper around torrent search providers.
 ## API
 
 ```text
-GET /v1/t?search={search name}[&filter={keyword}]
+GET /v1/t?search={search name}
 ```
 
 Example:
 
 ```bash
-curl --noproxy '*' 'http://127.0.0.1:6567/v1/t?search=mortal%20kombat%20ii&filter=2160p'
+curl --noproxy '*' 'http://127.0.0.1:6567/v1/t?search=mortal%20kombat%20ii%202160p'
 ```
 
 Successful responses return normalized torrent records directly. Raw provider
@@ -41,9 +41,7 @@ Errors return a structured JSON error:
 }
 ```
 
-`search` is required. `filter` is optional and matches result text
-case-insensitively after providers return. Without `filter`, non-video results
-are returned as well. Results are de-duplicated, sorted by seeders descending,
+`search` is required. Results are de-duplicated, sorted by seeders descending,
 and capped by page size.
 
 Providers are queried concurrently. If one provider fails, results from the
@@ -74,9 +72,6 @@ Search providers directly:
 go run ./cmd/server query 真人快打2
 ```
 
-Pass `--filter 1080p` before the search term to filter results by keyword.
-Omit it for unfiltered and non-video searches.
-
 Debug one provider at a time:
 
 ```bash
@@ -88,6 +83,18 @@ Repeat `--provider` to query a selected set:
 ```bash
 go run ./cmd/server query --provider knaben --provider torrentclaw 真人快打2
 ```
+
+Serve query results as a local HTTP file index:
+
+```bash
+go run ./cmd/server query 真人快打2 | go run ./cmd/server httpfs --stdin
+```
+
+`httpfs` starts a React web UI on `127.0.0.1:6570` by default. It loads torrent
+metadata on demand, lists torrent files, and exposes Range-capable HTTP download
+URLs for each file. Use `--stdin` to read piped query output,
+`--input results.json` to read saved query output, `--listen` to change the web
+address, and `--data-dir` to choose the torrent cache directory.
 
 Environment variables:
 

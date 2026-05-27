@@ -23,9 +23,8 @@ func TestSearchOmitsPaginationAndSortsBySeeders(t *testing.T) {
 
 	client := NewClient(server.URL, server.Client())
 	_, err := client.Search(context.Background(), provider.SearchRequest{
-		Query:  "movie",
-		Filter: "1080p",
-		Limit:  1,
+		Query: "movie 1080p",
+		Limit: 1,
 	})
 	if err != nil {
 		t.Fatal(err)

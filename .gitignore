@@ -17,6 +17,9 @@ go.work
 # Build output
 bin/
 
+# Frontend dependencies
+node_modules/
+
 # IDE - JetBrains
 .idea/
 

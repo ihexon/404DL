@@ -13,6 +13,7 @@ func newApp() *cli.App {
 		Commands: []*cli.Command{
 			newServerCommand(),
 			newQueryCommand(),
+			newHTTPFSCommand(),
 		},
 	}
 }
@@ -53,12 +54,8 @@ func newQueryCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdQuery,
 		Usage:     "query torrent providers directly",
-		UsageText: "mvdl query [--filter keyword] <search term>",
+		UsageText: "mvdl query <search term>",
 		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:  FlagFilter,
-				Usage: "optional case-insensitive result filter, for example 1080p, 2160p, or linux",
-			},
 			&cli.DurationFlag{
 				Name:  FlagTimeout,
 				Usage: "search timeout, default 8s",
@@ -75,5 +72,38 @@ func newQueryCommand() *cli.Command {
 			},
 		},
 		Action: runSearch,
+	}
+}
+
+func newHTTPFSCommand() *cli.Command {
+	return &cli.Command{
+		Name:      SubCmdHTTPFS,
+		Usage:     "serve query results as a local HTTP file index",
+		UsageText: "mvdl query <search term> | mvdl httpfs --stdin\n   mvdl httpfs --input results.json",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:  FlagInput,
+				Usage: "query JSON input file",
+			},
+			&cli.BoolFlag{
+				Name:  FlagStdin,
+				Usage: "read query JSON from stdin",
+			},
+			&cli.StringFlag{
+				Name:  FlagListen,
+				Usage: "HTTP listen address",
+				Value: DefaultHTTPFSAddr,
+			},
+			&cli.StringFlag{
+				Name:  FlagDataDir,
+				Usage: "directory for torrent data and metadata cache",
+			},
+			&cli.StringFlag{
+				Name:  FlagTorrentListen,
+				Usage: "torrent listen address",
+				Value: DefaultTorrentListenAddr,
+			},
+		},
+		Action: runHTTPFS,
 	}
 }
