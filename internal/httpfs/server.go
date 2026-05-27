@@ -194,30 +194,36 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var selected *torrent.File
 	for _, file := range t.Files() {
-		if file.DisplayPath() != filePath {
-			continue
+		if file.DisplayPath() == filePath {
+			selected = file
+			break
 		}
-		reader := file.NewReader()
-		reader.SetContext(r.Context())
-		reader.SetResponsive()
-		reader.SetReadaheadFunc(downloadReadahead)
-		defer reader.Close()
-		fields["bytes"] = file.Length()
-		fields["info_hash"] = t.InfoHash().HexString()
+	}
+	if selected == nil {
 		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
-		logrus.WithFields(fields).Info("httpfs download stream started")
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("ETag", downloadETag(t.InfoHash().HexString(), filePath, file.Length()))
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{
-			"filename": path.Base(filePath),
-		}))
-		http.ServeContent(w, r, path.Base(filePath), time.Time{}, reader)
+		logrus.WithFields(fields).Warn("httpfs download failed: file not found")
+		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
+
+	reader := selected.NewReader()
+	reader.SetContext(r.Context())
+	reader.SetResponsive()
+	reader.SetReadaheadFunc(downloadReadahead)
+	defer reader.Close()
+
+	fields["bytes"] = selected.Length()
+	fields["info_hash"] = t.InfoHash().HexString()
 	fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
-	logrus.WithFields(fields).Warn("httpfs download failed: file not found")
-	http.Error(w, "file not found", http.StatusNotFound)
+	logrus.WithFields(fields).Info("httpfs download stream started")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("ETag", downloadETag(t.InfoHash().HexString(), filePath, selected.Length()))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{
+		"filename": path.Base(filePath),
+	}))
+	http.ServeContent(w, r, path.Base(filePath), time.Time{}, reader)
 }
 
 func downloadETag(infoHash, filePath string, size int64) string {
