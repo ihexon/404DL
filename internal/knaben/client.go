@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 
+	"mvdl/internal/logging"
 	"mvdl/internal/magnet"
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
@@ -70,12 +72,15 @@ func (c *Client) Name() string {
 }
 
 func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
-	log.WithFields(log.Fields{
+	fields := logging.MergeFields(ctx, logrus.Fields{
 		"provider": c.Name(),
 		"query":    req.Query,
 		"sort":     "seeders desc",
-	}).Info("knaben api request prepared")
+		"api_url":  c.apiURL,
+	})
+	logrus.WithFields(fields).Info("knaben api request prepared")
 
+	startedAt := time.Now()
 	hits, err := c.search(ctx, SearchRequest{
 		SearchType:     "100%",
 		SearchField:    "title",
@@ -88,13 +93,21 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	if err != nil {
 		return nil, err
 	}
-	log.WithFields(log.Fields{
-		"provider": c.Name(),
-		"count":    len(hits),
-	}).Info("knaben api response decoded")
+	fields["raw_hits"] = len(hits)
+	fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+	logrus.WithFields(fields).Info("knaben api response decoded")
 
 	out := make([]model.Torrent, 0, len(hits))
+	magnetCount := 0
+	hashCount := 0
 	for _, hit := range hits {
+		normalizedMagnet := magnet.NormalizeURLPtr(hit.MagnetURL)
+		if normalizedMagnet != nil {
+			magnetCount++
+		}
+		if hit.Hash != nil && strings.TrimSpace(*hit.Hash) != "" {
+			hashCount++
+		}
 		out = append(out, model.Torrent{
 			Provider:  c.Name(),
 			Title:     hit.Title,
@@ -102,12 +115,16 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 			Category:  hit.Category,
 			Date:      hit.Date,
 			Hash:      hit.Hash,
-			MagnetURL: magnet.NormalizeURLPtr(hit.MagnetURL),
+			MagnetURL: normalizedMagnet,
 			Peers:     hit.Peers,
 			Seeders:   hit.Seeders,
 		})
 	}
 
+	fields["normalized_results"] = len(out)
+	fields["with_hash"] = hashCount
+	fields["with_magnet"] = magnetCount
+	logrus.WithFields(fields).Info("knaben results normalized")
 	return out, nil
 }
 
@@ -130,6 +147,12 @@ func (c *Client) search(ctx context.Context, req SearchRequest) ([]torrent, erro
 		return nil, provider.NewRequestError(c.Name(), httpReq, err)
 	}
 	defer resp.Body.Close()
+	logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
+		"provider":    c.Name(),
+		"http_method": httpReq.Method,
+		"http_url":    httpReq.URL.String(),
+		"http_status": resp.StatusCode,
+	})).Info("knaben api response received")
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

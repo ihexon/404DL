@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -74,8 +74,8 @@ func setRequestFields(httpErr *HTTPError, req *http.Request) {
 	}
 }
 
-func ErrorFields(err error) log.Fields {
-	fields := log.Fields{
+func ErrorFields(err error) logrus.Fields {
+	fields := logrus.Fields{
 		"error": err,
 	}
 

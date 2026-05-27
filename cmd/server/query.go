@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
+	"mvdl/internal/logging"
 	"mvdl/internal/provider"
 )
 
 func runSearch(c *cli.Context) error {
+	startedAt := time.Now()
 	searchName := c.Args().First()
 	if searchName == "" {
 		return fmt.Errorf("movie name is required")
@@ -26,18 +29,36 @@ func runSearch(c *cli.Context) error {
 		return err
 	}
 
+	requestID := logging.NewRequestID()
 	logrus.WithFields(logrus.Fields{
-		"search":    searchName,
-		"providers": providerNames,
+		"request_id": requestID,
+		"search":     searchName,
+		"providers":  providerNames,
+		"limit":      c.Int(FlagPageSize),
+		"timeout":    client.Timeout.String(),
 	}).Info("search request started")
 
-	hits, err := searcher.Search(c.Context, provider.SearchRequest{
+	ctx := logging.WithRequestID(c.Context, requestID)
+	hits, err := searcher.Search(ctx, provider.SearchRequest{
 		Query: searchName,
 		Limit: c.Int(FlagPageSize),
 	})
 	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"request_id":  requestID,
+			"search":      searchName,
+			"providers":   providerNames,
+			"duration_ms": logging.DurationMillis(time.Since(startedAt)),
+		}).Error("search request failed")
 		return fmt.Errorf("search torrents: %w", err)
 	}
+	logrus.WithFields(logrus.Fields{
+		"request_id":  requestID,
+		"search":      searchName,
+		"providers":   providerNames,
+		"count":       len(hits),
+		"duration_ms": logging.DurationMillis(time.Since(startedAt)),
+	}).Info("search request completed")
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(false)

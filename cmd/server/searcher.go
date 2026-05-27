@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/sirupsen/logrus"
+
 	"mvdl/internal/knaben"
 	"mvdl/internal/provider"
 	"mvdl/internal/search"
@@ -41,6 +43,10 @@ func newTorrentSearcher(client *http.Client, providerNames ...string) (*search.S
 		return nil, err
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"providers": providerNamesFromInstances(providers),
+		"timeout":   clientTimeoutString(client),
+	}).Info("torrent searcher configured")
 	aggregator := provider.NewAggregator(providers...)
 	return search.NewService(aggregator), nil
 }
@@ -95,4 +101,19 @@ func availableProviderNames() []string {
 		names = append(names, factory.name)
 	}
 	return names
+}
+
+func providerNamesFromInstances(providers []provider.Provider) []string {
+	names := make([]string, 0, len(providers))
+	for _, p := range providers {
+		names = append(names, p.Name())
+	}
+	return names
+}
+
+func clientTimeoutString(client *http.Client) string {
+	if client == nil {
+		return ""
+	}
+	return client.Timeout.String()
 }

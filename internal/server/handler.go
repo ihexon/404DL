@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 
+	"mvdl/internal/logging"
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
 )
@@ -71,53 +73,61 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
+	startedAt := time.Now()
+	requestID := logging.RequestIDFromHTTP(r)
+	w.Header().Set(logging.RequestIDHeader, requestID)
+	ctx := logging.WithRequestID(r.Context(), requestID)
+
 	params := parseTorrentQuery(r)
-	fields := log.Fields{
-		"method": r.Method,
-		"path":   r.URL.Path,
-		"query":  params.SearchName,
-	}
+	fields := logging.HTTPRequestFields(r, requestID)
+	fields["query"] = params.SearchName
+	fields["page_size"] = h.pageSize
+
 	if strings.TrimSpace(params.SearchName) == "" {
-		log.WithFields(fields).Info("rejecting request: missing search")
+		logrus.WithFields(fields).Warn("torrent search request rejected: missing search")
 		writeError(w, http.StatusBadRequest, "bad_request", "search name is required")
 		return
 	}
 	if len(params.SearchName) > 200 {
-		log.WithFields(fields).Info("rejecting request: search too long")
+		fields["query_length"] = len(params.SearchName)
+		logrus.WithFields(fields).Warn("torrent search request rejected: search too long")
 		writeError(w, http.StatusBadRequest, "bad_request", "search name is too long")
 		return
 	}
 
-	log.WithFields(fields).Info("torrent search request received")
-	hits, err := h.client.Search(r.Context(), provider.SearchRequest{
+	logrus.WithFields(fields).Info("torrent search request started")
+	hits, err := h.client.Search(ctx, provider.SearchRequest{
 		Query: params.SearchName,
 		Limit: h.pageSize,
 	})
 	if err != nil {
-		log.WithError(err).WithFields(fields).Info("torrent search request failed")
+		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+		logrus.WithError(err).WithFields(fields).Error("torrent search request failed")
 		writeError(w, http.StatusBadGateway, "provider_error", err.Error())
 		return
 	}
 	encryptMagnetURL := h.magnetEncryptor != nil
 	if encryptMagnetURL {
-		encrypted, err := h.encryptMagnets(hits)
+		encrypted, encryptedCount, err := h.encryptMagnets(hits)
 		if err != nil {
-			log.WithError(err).WithFields(fields).Info("torrent magnet encryption failed")
+			fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+			logrus.WithError(err).WithFields(fields).Error("torrent magnet encryption failed")
 			writeError(w, http.StatusInternalServerError, "internal_server_error", "failed to encrypt magnetUrl")
 			return
 		}
 		hits = encrypted
+		fields["encrypted_magnets"] = encryptedCount
 	}
 
-	log.WithFields(log.Fields{
-		"query":     params.SearchName,
-		"count":     len(hits),
-		"encrypted": encryptMagnetURL,
-	}).Info("torrent search request completed")
+	fields["status"] = http.StatusOK
+	fields["result_count"] = len(hits)
+	fields["magnet_encryption"] = encryptMagnetURL
+	fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+	logrus.WithFields(fields).Info("torrent search request completed")
 	writeJSON(w, http.StatusOK, hits)
 }
 
-func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, error) {
+func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, int, error) {
 	encrypted := make([]model.Torrent, len(hits))
 	copy(encrypted, hits)
 
@@ -128,14 +138,13 @@ func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, error) 
 		}
 		value, err := h.magnetEncryptor.EncryptString(*encrypted[i].MagnetURL)
 		if err != nil {
-			return nil, err
+			return nil, count, err
 		}
 		encrypted[i].MagnetURL = &value
 		count++
 	}
 
-	log.WithField("count", count).Info("magnetUrl fields encrypted")
-	return encrypted, nil
+	return encrypted, count, nil
 }
 
 type torrentPathParams struct {
