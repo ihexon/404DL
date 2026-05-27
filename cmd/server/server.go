@@ -9,7 +9,6 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"mvdl/internal/crypto"
-	"mvdl/internal/metadata"
 	"mvdl/internal/server"
 )
 
@@ -72,20 +71,6 @@ func newMagnetEncryptor() (server.StringEncryptor, error) {
 		return nil, fmt.Errorf("invalid magnetUrl encryption key: %w", err)
 	}
 	return encryptor, nil
-}
-
-func newMetadataResolver(client *http.Client) metadata.Resolver {
-	apiKey := envString(envTMDBAPIKey, "")
-	if apiKey == "" {
-		logrus.Warnf("tmdb resolver disabled: %s is not set", envTMDBAPIKey)
-		return nil
-	}
-
-	return metadata.NewTMDBClient(metadata.TMDBOptions{
-		APIURL:     envString(envTMDBAPIURL, defaultTMDBAPIURL),
-		APIKey:     apiKey,
-		HTTPClient: client,
-	})
 }
 
 func envString(name, fallback string) string {

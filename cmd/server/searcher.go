@@ -42,7 +42,7 @@ func newTorrentSearcher(client *http.Client, providerNames ...string) (*search.S
 	}
 
 	aggregator := provider.NewAggregator(providers...)
-	return search.NewService(newMetadataResolver(client), aggregator), nil
+	return search.NewService(aggregator), nil
 }
 
 func newSearchProviders(client *http.Client, providerNames ...string) ([]provider.Provider, error) {

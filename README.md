@@ -89,6 +89,20 @@ Repeat `--provider` to query a selected set:
 go run ./cmd/server query --provider knaben --provider torrentclaw 真人快打2
 ```
 
+Query TMDb movie or TV search results directly. Results are printed as concise JSON.
+Movie results are sorted by year descending, then `vote_average` descending; TV
+results are sorted by year descending:
+
+```bash
+MVDL_TMDB_APIKEY=your-key go run ./cmd/server tmdb --movie 'Mortal Kombat'
+MVDL_TMDB_APIKEY=your-key go run ./cmd/server tmdb --tv 'Breaking Bad'
+MVDL_TMDB_APIKEY=your-key go run ./cmd/server tmdb --tv --language zh-CN '黑袍纠察队'
+```
+
+TV results include aggregated detail fields such as `number_of_episodes`,
+`number_of_seasons`, `seasons`, and per-season `episodeList`.
+The default TMDb response language is `en-US`.
+
 Generate an AES-256 key for `MVDL_CRYKEY`:
 
 ```bash
@@ -170,13 +184,8 @@ When `MVDL_CRYKEY` is set, every non-empty `magnetUrl` in the JSON response is
 encrypted with AES-256-GCM before it is returned. The key must be exactly 32
 bytes.
 
-When `MVDL_TMDB_APIKEY` is set, search terms are first resolved with TMDb movie
-search. The resolved English/original title plus release year is sent to the
-torrent providers. `MVDL_TMDB_APIKEY` may be either a TMDb v3 API key or a TMDb
-API Read Access Token.
-
-If TMDb returns an error, for example because the key expired, the server logs a
-warning to stdout/stderr and falls back to the original search term.
+`MVDL_TMDB_APIKEY` is used only by the `tmdb` subcommand. It may be either a
+TMDb v3 API key or a TMDb API Read Access Token.
 
 ## Docker
 
