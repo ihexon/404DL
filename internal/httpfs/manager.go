@@ -158,7 +158,7 @@ func (m *Manager) EnsureFiles(ctx context.Context, id string) (TorrentItem, bool
 			"hash":       item.Hash,
 			"has_magnet": item.MagnetURL != "",
 			"status":     item.Status,
-		})).Info("httpfs metadata loading scheduled")
+		})).Debug("httpfs metadata loading scheduled")
 		go m.loadMetadata(id, logging.RequestID(ctx))
 	}
 	out := cloneItem(item)
