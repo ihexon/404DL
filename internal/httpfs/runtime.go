@@ -154,7 +154,23 @@ func (c *runtimeCollector) snapshot(id string, client *torrent.Client, t *torren
 		DHT:     dhtServers(client),
 		Events:  c.eventsFor(t.InfoHash().HexString()),
 	}
+	snapshot.normalize()
 	return snapshot
+}
+
+func (s *RuntimeSnapshot) normalize() {
+	if s.Peers == nil {
+		s.Peers = []RuntimePeer{}
+	}
+	if s.Pieces == nil {
+		s.Pieces = []RuntimePieceRun{}
+	}
+	if s.DHT == nil {
+		s.DHT = []RuntimeDHTServer{}
+	}
+	if s.Events == nil {
+		s.Events = []RuntimeTorrentEvent{}
+	}
 }
 
 func (c *runtimeCollector) completedHandshake(pc *torrent.PeerConn, infoHash torrent.InfoHash) {
