@@ -259,50 +259,113 @@ h1 {
 
 .torrentDetails {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 14px 16px 16px 54px;
   border-top: 1px solid #d8dee4;
   background: #f6f8fa;
 }
 
-.detailsSection,
-.assetsPanel,
-.runtimePanel,
-.runtimeSection {
+.detailsGrid {
+  display: grid;
+  gap: 12px;
   min-width: 0;
 }
 
-.sectionHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 26px;
-  margin-bottom: 8px;
+.overviewGrid {
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
 }
 
-.sectionHeader h3 {
+.runtimeGrid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+}
+
+.detailBox,
+.runtimePanel,
+.subsection {
+  min-width: 0;
+}
+
+.detailBox {
+  overflow: hidden;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.detailBoxHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid #d8dee4;
+  background: #f6f8fa;
+}
+
+.detailBoxTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detailBoxTitle svg {
+  flex: 0 0 auto;
+  color: #57606a;
+}
+
+.detailBoxTitle h3 {
   margin: 0;
   color: #24292f;
   font-size: 13px;
   font-weight: 700;
 }
 
-.sectionHeader span {
+.detailBoxMeta {
+  flex: 0 0 auto;
   color: #57606a;
   font-size: 12px;
 }
 
-.sectionHeader.compact {
-  min-height: 22px;
-  margin-top: 10px;
+.detailBoxBody {
+  padding: 12px;
+}
+
+.detailBoxBody.flush {
+  padding: 0;
+}
+
+.torrentInfoBody {
+  display: grid;
+  gap: 8px;
+}
+
+.subsectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
+}
+
+.subsectionHeader h4 {
+  margin: 0;
+  color: #24292f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.subsectionHeader span {
+  color: #57606a;
+  font-size: 12px;
 }
 
 .detailGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px 14px;
-  margin: 0 0 10px;
+  margin: 0;
 }
 
 .detailItem {
@@ -324,7 +387,6 @@ h1 {
 
 .codeBlock {
   min-width: 0;
-  margin-top: 8px;
   overflow: hidden;
   border: 1px solid #d0d7de;
   border-radius: 6px;
@@ -363,75 +425,73 @@ h1 {
   background: #fff;
 }
 
-.panel {
-  padding: 10px 0 0;
-}
-
-.panelState {
+.panelEmpty {
+  display: flex;
+  align-items: center;
+  min-height: 72px;
+  padding: 12px;
   color: #57606a;
   font-size: 13px;
 }
 
+.panelEmpty.error {
+  color: #cf222e;
+}
+
 .runtimePanel {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .runtimeStats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px 14px;
-  padding: 10px;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: #fff;
 }
 
 .pieceMap {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10px, 1fr));
+  gap: 3px;
   width: 100%;
-  height: 18px;
-  overflow: hidden;
-  border: 1px solid #d0d7de;
-  border-radius: 5px;
-  background: #eaeef2;
+  padding: 8px;
+  border: 1px solid #d8dee4;
+  border-radius: 6px;
+  background: #f6f8fa;
 }
 
-.pieceRun {
-  min-width: 2px;
-  height: 100%;
+.pieceCell {
+  aspect-ratio: 1;
+  min-width: 10px;
+  border-radius: 2px;
+  background: #ebedf0;
 }
 
-.pieceRun.complete {
-  background: #1a7f37;
+.pieceCell.complete {
+  background: #2da44e;
 }
 
-.pieceRun.partial,
-.pieceRun.wanted,
-.pieceRun.readahead,
-.pieceRun.now {
+.pieceCell.active {
   background: #0969da;
 }
 
-.pieceRun.hashing,
-.pieceRun.queued_hash {
+.pieceCell.hashing {
   background: #9a6700;
 }
 
-.pieceRun.empty {
-  background: #d8dee4;
+.pieceCell.mixed {
+  background: #40c463;
 }
 
-.compactList,
-.peerTable,
-.eventList {
-  overflow: hidden;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: #fff;
+.pieceCell.empty {
+  background: #ebedf0;
 }
 
-.compactRow,
+.dataList {
+  width: 100%;
+}
+
+.dhtRow,
 .peerRow,
 .eventRow {
   display: grid;
@@ -443,8 +503,8 @@ h1 {
   font-size: 12px;
 }
 
-.compactRow {
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+.dhtRow {
+  grid-template-columns: 18px minmax(0, 1fr) auto auto auto;
 }
 
 .peerRow {
@@ -455,37 +515,30 @@ h1 {
   grid-template-columns: 78px minmax(0, 1fr);
 }
 
-.compactRow + .compactRow,
+.dhtRow + .dhtRow,
 .peerRow + .peerRow,
 .eventRow + .eventRow {
   border-top: 1px solid #d8dee4;
 }
 
-.compactRow svg,
+.dhtRow svg,
 .peerRow svg {
   color: #57606a;
 }
 
-.compactRow span,
+.dhtRow span,
 .peerRow span,
 .eventRow span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.peerAddress {
+.monoText {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
-.errorText {
-  color: #cf222e;
-}
-
 .assetList {
-  overflow: hidden;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: #fff;
+  width: 100%;
 }
 
 .assetRow {
@@ -568,6 +621,11 @@ h1 {
   .torrentDetails {
     padding-left: 16px;
   }
+
+  .overviewGrid,
+  .runtimeGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 560px) {
@@ -589,13 +647,13 @@ h1 {
     justify-content: flex-start;
   }
 
-  .compactRow,
+  .dhtRow,
   .peerRow,
   .eventRow {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .compactRow svg,
+  .dhtRow svg,
   .peerRow svg {
     display: none;
   }

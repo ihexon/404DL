@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
   Calendar,
   Check,
   ChevronDown,
@@ -153,6 +154,7 @@ class HTTPError extends Error {
 
 const pollIntervalMs = 1000;
 const runtimePollIntervalMs = 1200;
+const maxPieceMapCells = 320;
 
 const statusLabels: Record<TorrentStatus, string> = {
   unavailable: "Unavailable",
@@ -380,13 +382,32 @@ function MetaPill({
 
 function TorrentDetails({ item }: { item: TorrentItem }) {
   const runtime = useTorrentRuntime(item);
+  const snapshot = runtime.snapshot;
 
   return (
     <div className="torrentDetails">
-      <section className="detailsSection">
-        <div className="sectionHeader">
-          <h3>Torrent</h3>
-        </div>
+      <div className="detailsGrid overviewGrid">
+        <TorrentInfoPanel item={item} />
+        <RuntimePanel snapshot={snapshot} />
+      </div>
+      <FilePanel item={item} />
+      <div className="detailsGrid runtimeGrid">
+        <RuntimePeers snapshot={snapshot} />
+        <RuntimeDHT snapshot={snapshot} />
+      </div>
+      <RuntimeEvents snapshot={snapshot} />
+    </div>
+  );
+}
+
+function TorrentInfoPanel({ item }: { item: TorrentItem }) {
+  return (
+    <DetailBox
+      icon={<Database size={16} />}
+      meta={statusLabels[item.status]}
+      title="Torrent"
+    >
+      <div className="torrentInfoBody">
         <dl className="detailGrid">
           <DetailItem label="Provider" value={item.provider || "-"} />
           <DetailItem label="Size" value={formatBytes(item.bytes)} />
@@ -404,11 +425,46 @@ function TorrentDetails({ item }: { item: TorrentItem }) {
           label="MagnetLink"
           value={item.magnetUrl || ""}
         />
-      </section>
-      <RuntimePanel snapshot={runtime.snapshot} />
-      <FilePanel item={item} />
-    </div>
+      </div>
+    </DetailBox>
   );
+}
+
+function DetailBox({
+  bodyClassName = "",
+  children,
+  icon,
+  meta,
+  title
+}: {
+  bodyClassName?: string;
+  children: React.ReactNode;
+  icon: React.ReactNode;
+  meta?: string;
+  title: string;
+}) {
+  return (
+    <section className="detailBox">
+      <div className="detailBoxHeader">
+        <div className="detailBoxTitle">
+          {icon}
+          <h3>{title}</h3>
+        </div>
+        {meta && <span className="detailBoxMeta">{meta}</span>}
+      </div>
+      <div className={`detailBoxBody ${bodyClassName}`}>{children}</div>
+    </section>
+  );
+}
+
+function PanelEmpty({
+  children,
+  tone = "muted"
+}: {
+  children: React.ReactNode;
+  tone?: "muted" | "error";
+}) {
+  return <div className={`panelEmpty ${tone}`}>{children}</div>;
 }
 
 function useTorrentRuntime(item: TorrentItem): { snapshot: RuntimeSnapshot | null } {
@@ -452,22 +508,29 @@ function useTorrentRuntime(item: TorrentItem): { snapshot: RuntimeSnapshot | nul
 }
 
 function RuntimePanel({ snapshot }: { snapshot: RuntimeSnapshot | null }) {
-  if (!snapshot) {
-    return <div className="panel panelState muted">Runtime pending</div>;
-  }
+  const pieces = snapshot ? pieceCounts(snapshot.pieces) : null;
 
   return (
-    <section className="runtimePanel">
-      <div className="sectionHeader">
-        <h3>Runtime</h3>
-        <span>{formatTime(snapshot.updated)}</span>
-      </div>
-      <RuntimeSummaryGrid summary={snapshot.summary} />
-      <PieceMap pieces={snapshot.pieces} />
-      <RuntimeDHT servers={snapshot.dht} />
-      <RuntimePeers peers={snapshot.peers} />
-      <RuntimeEvents events={snapshot.events} />
-    </section>
+    <DetailBox
+      icon={<Activity size={16} />}
+      meta={snapshot ? formatTime(snapshot.updated) : "pending"}
+      title="Runtime"
+    >
+      {!snapshot ? (
+        <PanelEmpty>Runtime pending</PanelEmpty>
+      ) : (
+        <div className="runtimePanel">
+          <RuntimeSummaryGrid summary={snapshot.summary} />
+          <div className="subsection">
+            <div className="subsectionHeader">
+              <h4>Pieces</h4>
+              <span>{pieces ? `${pieces.complete}/${pieces.total}` : "-"}</span>
+            </div>
+            <PieceMap pieces={snapshot.pieces} />
+          </div>
+        </div>
+      )}
+    </DetailBox>
   );
 }
 
@@ -496,65 +559,187 @@ function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
   );
 }
 
+type PieceCell = {
+  start: number;
+  end: number;
+  length: number;
+  state: string;
+};
+
 function PieceMap({ pieces }: { pieces: RuntimePieceRun[] }) {
-  if (pieces.length === 0) {
-    return <div className="panel panelState muted">No piece state</div>;
+  const total = countPieces(pieces);
+  if (total === 0) {
+    return <PanelEmpty>No piece state</PanelEmpty>;
   }
-  const total = pieces.reduce((sum, piece) => sum + piece.length, 0);
+  const cells = pieceCells(pieces, total);
+  const title =
+    cells.length === total
+      ? `${total} pieces`
+      : `${cells.length} blocks representing ${total} pieces`;
+
   return (
-    <div className="pieceMap" title={`${total} pieces`}>
-      {pieces.map((piece) => (
+    <div className="pieceMap" title={title}>
+      {cells.map((cell) => (
         <span
-          className={`pieceRun ${piece.state}`}
-          key={`${piece.start}-${piece.end}-${piece.state}`}
-          style={{ flexGrow: Math.max(piece.length, 1) }}
-          title={`${piece.start}-${piece.end}: ${piece.state}`}
+          className={`pieceCell ${cell.state}`}
+          key={`${cell.start}-${cell.end}`}
+          title={`${cell.start}-${cell.end}: ${pieceCellLabel(cell.state)} (${cell.length} pieces)`}
         />
       ))}
     </div>
   );
 }
 
-function RuntimeDHT({ servers }: { servers: RuntimeDHTServer[] }) {
+function pieceCells(pieces: RuntimePieceRun[], total: number): PieceCell[] {
+  const cellCount = Math.min(total, maxPieceMapCells);
+  const cells: PieceCell[] = [];
+  let runIndex = 0;
+  let runStart = 0;
+
+  for (let index = 0; index < cellCount; index++) {
+    const start = Math.floor((index * total) / cellCount);
+    const end = Math.floor(((index + 1) * total) / cellCount) - 1;
+    const length = end - start + 1;
+    const scores = new Map<string, number>();
+
+    while (runIndex < pieces.length && runStart + pieces[runIndex].length <= start) {
+      runStart += pieces[runIndex].length;
+      runIndex++;
+    }
+
+    let cursor = start;
+    let cursorRunIndex = runIndex;
+    let cursorRunStart = runStart;
+    while (cursorRunIndex < pieces.length && cursor <= end) {
+      const run = pieces[cursorRunIndex];
+      const runEnd = cursorRunStart + run.length - 1;
+      const overlap = Math.min(end, runEnd) - cursor + 1;
+      if (overlap > 0) {
+        const state = pieceVisualState(run);
+        scores.set(state, (scores.get(state) ?? 0) + overlap);
+        cursor += overlap;
+      }
+      cursorRunStart += run.length;
+      cursorRunIndex++;
+    }
+
+    cells.push({
+      start,
+      end,
+      length,
+      state: dominantPieceState(scores, length)
+    });
+  }
+  return cells;
+}
+
+function countPieces(pieces: RuntimePieceRun[]): number {
+  return pieces.reduce((sum, piece) => sum + piece.length, 0);
+}
+
+function pieceCounts(pieces: RuntimePieceRun[]): { complete: number; total: number } {
+  return pieces.reduce(
+    (counts, piece) => ({
+      complete: counts.complete + (piece.complete ? piece.length : 0),
+      total: counts.total + piece.length
+    }),
+    { complete: 0, total: 0 }
+  );
+}
+
+function pieceVisualState(piece: RuntimePieceRun): string {
+  if (piece.complete) {
+    return "complete";
+  }
+  if (piece.partial || piece.state === "wanted" || piece.priority !== "none") {
+    return "active";
+  }
+  if (piece.hashing || piece.queuedHash) {
+    return "hashing";
+  }
+  return "empty";
+}
+
+function dominantPieceState(scores: Map<string, number>, length: number): string {
+  if ((scores.get("complete") ?? 0) === length) {
+    return "complete";
+  }
+  if ((scores.get("active") ?? 0) > 0) {
+    return "active";
+  }
+  if ((scores.get("hashing") ?? 0) > 0) {
+    return "hashing";
+  }
+  if ((scores.get("complete") ?? 0) > 0) {
+    return "mixed";
+  }
+  return "empty";
+}
+
+function pieceCellLabel(state: string): string {
+  switch (state) {
+    case "complete":
+      return "complete";
+    case "active":
+      return "downloading";
+    case "hashing":
+      return "checking";
+    case "mixed":
+      return "mixed";
+    default:
+      return "empty";
+  }
+}
+
+function RuntimeDHT({ snapshot }: { snapshot: RuntimeSnapshot | null }) {
+  const servers = snapshot?.dht ?? [];
   return (
-    <section className="runtimeSection">
-      <div className="sectionHeader compact">
-        <h3>DHT</h3>
-        <span>{servers.length}</span>
-      </div>
-      {servers.length === 0 ? (
-        <div className="panel panelState muted">DHT unavailable</div>
+    <DetailBox
+      bodyClassName="flush"
+      icon={<RadioTower size={16} />}
+      meta={snapshot ? `${servers.length}` : "pending"}
+      title="DHT"
+    >
+      {!snapshot ? (
+        <PanelEmpty>Runtime pending</PanelEmpty>
+      ) : servers.length === 0 ? (
+        <PanelEmpty>DHT unavailable</PanelEmpty>
       ) : (
-        <div className="compactList">
+        <div className="dataList">
           {servers.map((server) => (
-            <div className="compactRow" key={`${server.id}-${server.address}`}>
+            <div className="dhtRow" key={`${server.id}-${server.address}`}>
               <RadioTower size={15} />
-              <span>{server.address}</span>
-              <span>{server.goodNodes}/{server.nodes} nodes</span>
+              <span className="monoText">{server.address}</span>
+              <span>{server.goodNodes}/{server.nodes} good</span>
               <span>{server.outstandingTransactions} tx</span>
+              <span>{server.badNodes} bad</span>
             </div>
           ))}
         </div>
       )}
-    </section>
+    </DetailBox>
   );
 }
 
-function RuntimePeers({ peers }: { peers: RuntimePeer[] }) {
+function RuntimePeers({ snapshot }: { snapshot: RuntimeSnapshot | null }) {
+  const peers = snapshot?.peers ?? [];
   return (
-    <section className="runtimeSection">
-      <div className="sectionHeader compact">
-        <h3>Peers</h3>
-        <span>{peers.length}</span>
-      </div>
-      {peers.length === 0 ? (
-        <div className="panel panelState muted">No peers</div>
+    <DetailBox
+      bodyClassName="flush"
+      icon={<Network size={16} />}
+      meta={snapshot ? `${peers.length}` : "pending"}
+      title="Peers"
+    >
+      {!snapshot ? (
+        <PanelEmpty>Runtime pending</PanelEmpty>
+      ) : peers.length === 0 ? (
+        <PanelEmpty>No peers</PanelEmpty>
       ) : (
-        <div className="peerTable">
+        <div className="dataList">
           {peers.slice(0, 18).map((peer) => (
             <div className="peerRow" key={`${peer.address}-${peer.network}-${peer.connected}`}>
               <Network size={15} />
-              <span className="peerAddress">{peer.address}</span>
+              <span className="monoText">{peer.address}</span>
               <span>{peer.connected ? peer.network || "peer" : "known"}</span>
               <span>{peerSourceLabel(peer.source)}</span>
               <span>{formatBytes(peer.downloadRate)}/s</span>
@@ -563,22 +748,26 @@ function RuntimePeers({ peers }: { peers: RuntimePeer[] }) {
           ))}
         </div>
       )}
-    </section>
+    </DetailBox>
   );
 }
 
-function RuntimeEvents({ events }: { events: RuntimeTorrentEvent[] }) {
+function RuntimeEvents({ snapshot }: { snapshot: RuntimeSnapshot | null }) {
+  const events = snapshot?.events ?? [];
   const recent = events.slice(-12).reverse();
   return (
-    <section className="runtimeSection">
-      <div className="sectionHeader compact">
-        <h3>Events</h3>
-        <span>{events.length}</span>
-      </div>
-      {recent.length === 0 ? (
-        <div className="panel panelState muted">No events</div>
+    <DetailBox
+      bodyClassName="flush"
+      icon={<Calendar size={16} />}
+      meta={snapshot ? `${events.length}` : "pending"}
+      title="Events"
+    >
+      {!snapshot ? (
+        <PanelEmpty>Runtime pending</PanelEmpty>
+      ) : recent.length === 0 ? (
+        <PanelEmpty>No events</PanelEmpty>
       ) : (
-        <div className="eventList">
+        <div className="dataList">
           {recent.map((event, index) => (
             <div className="eventRow" key={`${event.time}-${event.type}-${index}`}>
               <span>{formatTime(event.time)}</span>
@@ -587,7 +776,7 @@ function RuntimeEvents({ events }: { events: RuntimeTorrentEvent[] }) {
           ))}
         </div>
       )}
-    </section>
+    </DetailBox>
   );
 }
 
@@ -631,23 +820,51 @@ function StatusBadge({ status }: { status: TorrentStatus }) {
 }
 
 function FilePanel({ item }: { item: TorrentItem }) {
+  const files = item.files ?? [];
+  const meta = item.status === "ready" ? `${files.length}` : statusLabels[item.status];
+
   if (item.status === "unavailable" || item.status === "error") {
-    return <div className="panel panelState errorText">{item.error || "Unavailable"}</div>;
+    return (
+      <DetailBox
+        icon={<FileText size={16} />}
+        meta={meta}
+        title="Files"
+      >
+        <PanelEmpty tone="error">{item.error || "Unavailable"}</PanelEmpty>
+      </DetailBox>
+    );
   }
   if (item.status === "idle" || item.status === "loading") {
-    return <div className="panel panelState muted">Metadata pending</div>;
+    return (
+      <DetailBox
+        icon={<FileText size={16} />}
+        meta={meta}
+        title="Files"
+      >
+        <PanelEmpty>Metadata pending</PanelEmpty>
+      </DetailBox>
+    );
   }
-  if (!item.files || item.files.length === 0) {
-    return <div className="panel panelState muted">No files</div>;
+  if (files.length === 0) {
+    return (
+      <DetailBox
+        icon={<FileText size={16} />}
+        meta={meta}
+        title="Files"
+      >
+        <PanelEmpty>No files</PanelEmpty>
+      </DetailBox>
+    );
   }
   return (
-    <section className="assetsPanel">
-      <div className="sectionHeader">
-        <h3>Files</h3>
-        <span>{item.files.length}</span>
-      </div>
+    <DetailBox
+      bodyClassName="flush"
+      icon={<FileText size={16} />}
+      meta={meta}
+      title="Files"
+    >
       <div className="assetList">
-        {item.files.map((file) => (
+        {files.map((file) => (
           <article className="assetRow" key={file.path}>
             <div className="assetIcon" aria-hidden="true">
               <FileText size={18} />
@@ -674,7 +891,7 @@ function FilePanel({ item }: { item: TorrentItem }) {
           </article>
         ))}
       </div>
-    </section>
+    </DetailBox>
   );
 }
 
