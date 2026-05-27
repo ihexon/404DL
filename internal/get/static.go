@@ -1,4 +1,4 @@
-package httpfs
+package get
 
 import "embed"
 

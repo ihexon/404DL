@@ -11,41 +11,41 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	"mvdl/internal/httpfs"
+	downloadui "mvdl/internal/get"
 )
 
-func runHTTPFS(c *cli.Context) error {
-	inputPath, ok, err := httpfsInputPath(c)
+func runGet(c *cli.Context) error {
+	inputPath, ok, err := getInputPath(c)
 	if err != nil || !ok {
 		return err
 	}
 
-	dataDir, err := httpfsDataDir(c.String(FlagDataDir))
+	saveTo, err := getSaveTo(c.String(FlagSaveTo))
 	if err != nil {
 		return err
 	}
 
-	cfg := httpfs.Config{
+	cfg := downloadui.Config{
 		ListenAddr:        c.String(FlagListen),
 		InputPath:         inputPath,
-		DataDir:           dataDir,
+		SaveTo:            saveTo,
 		TorrentListenAddr: c.String(FlagTorrentListen),
 		CryptoKey:         envString(envCryptoKey, ""),
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"listen": cfg.ListenAddr,
-		"input":  cfg.InputPath,
-		"data":   cfg.DataDir,
-	}).Info("httpfs starting")
+		"listen":  cfg.ListenAddr,
+		"input":   cfg.InputPath,
+		"save_to": cfg.SaveTo,
+	}).Info("get starting")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return httpfs.Run(ctx, cfg)
+	return downloadui.Run(ctx, cfg)
 }
 
-func httpfsInputPath(c *cli.Context) (string, bool, error) {
+func getInputPath(c *cli.Context) (string, bool, error) {
 	hasInput := c.IsSet(FlagInput)
 	hasStdin := c.Bool(FlagStdin)
 	if hasInput && hasStdin {
@@ -63,13 +63,13 @@ func httpfsInputPath(c *cli.Context) (string, bool, error) {
 	return "", false, nil
 }
 
-func httpfsDataDir(value string) (string, error) {
+func getSaveTo(value string) (string, error) {
 	if value != "" {
 		return value, nil
 	}
-	cacheDir, err := os.UserCacheDir()
+	wd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("resolve user cache dir: %w", err)
+		return "", fmt.Errorf("resolve current directory: %w", err)
 	}
-	return filepath.Join(cacheDir, "mvdl", "httpfs"), nil
+	return filepath.Join(wd, "mvdl-downloads"), nil
 }

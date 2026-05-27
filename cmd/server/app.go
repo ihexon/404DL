@@ -13,7 +13,7 @@ func newApp() *cli.App {
 		Commands: []*cli.Command{
 			newServerCommand(),
 			newQueryCommand(),
-			newHTTPFSCommand(),
+			newGetCommand(),
 		},
 	}
 }
@@ -75,11 +75,11 @@ func newQueryCommand() *cli.Command {
 	}
 }
 
-func newHTTPFSCommand() *cli.Command {
+func newGetCommand() *cli.Command {
 	return &cli.Command{
-		Name:      SubCmdHTTPFS,
-		Usage:     "serve query results as a local HTTP file index",
-		UsageText: "mvdl query <search term> | mvdl httpfs --stdin\n   mvdl httpfs --input results.json",
+		Name:      SubCmdGet,
+		Usage:     "download selected query results through BitTorrent",
+		UsageText: "mvdl query <search term> | mvdl get --stdin\n   mvdl get --input results.json",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  FlagInput,
@@ -92,11 +92,11 @@ func newHTTPFSCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:  FlagListen,
 				Usage: "HTTP listen address",
-				Value: DefaultHTTPFSAddr,
+				Value: DefaultGetAddr,
 			},
 			&cli.StringFlag{
-				Name:  FlagDataDir,
-				Usage: "directory for torrent data and metadata cache",
+				Name:  FlagSaveTo,
+				Usage: "directory to save downloaded files",
 			},
 			&cli.StringFlag{
 				Name:  FlagTorrentListen,
@@ -104,6 +104,6 @@ func newHTTPFSCommand() *cli.Command {
 				Value: DefaultTorrentListenAddr,
 			},
 		},
-		Action: runHTTPFS,
+		Action: runGet,
 	}
 }

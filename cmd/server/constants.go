@@ -17,14 +17,14 @@ const (
 	FlagTimeout       = "timeout"
 	FlagInput         = "input"
 	FlagStdin         = "stdin"
-	FlagDataDir       = "data-dir"
+	FlagSaveTo        = "save-to"
 	FlagTorrentListen = "torrent-listen"
 
 	DefaultListenAddr        = "127.0.0.1:6567"
-	DefaultHTTPFSAddr        = "127.0.0.1:6570"
+	DefaultGetAddr           = "127.0.0.1:6570"
 	DefaultTorrentListenAddr = ":42069"
 
-	SubCmdHTTPFS = "httpfs"
+	SubCmdGet    = "get"
 	SubCmdQuery  = "query"
 	SubCmdServer = "server"
 )

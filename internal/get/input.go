@@ -1,4 +1,4 @@
-package httpfs
+package get
 
 import (
 	"encoding/json"
@@ -27,14 +27,23 @@ func loadQueryResults(path, cryptoKey string) ([]TorrentItem, error) {
 	var results []model.Torrent
 	decoder := json.NewDecoder(reader)
 	if err := decoder.Decode(&results); err != nil {
-		logrus.WithError(err).WithField("input", inputLabel(path)).Error("httpfs query input decode failed")
+		logrus.WithError(err).WithField("input", inputLabel(path)).Error("get query input decode failed")
 		return nil, fmt.Errorf("decode query JSON: %w", err)
+	}
+
+	var encryptor *crypto.StringEncryptor
+	if cryptoKey != "" {
+		var err error
+		encryptor, err = crypto.NewStringEncryptor(cryptoKey)
+		if err != nil {
+			return nil, fmt.Errorf("invalid MVDL_CRYKEY: %w", err)
+		}
 	}
 
 	items := make([]TorrentItem, 0, len(results))
 	stats := inputStats{}
 	for i, result := range results {
-		item := torrentItemFromResult(i, result, cryptoKey, &stats)
+		item := torrentItemFromResult(i, result, encryptor, &stats)
 		items = append(items, item)
 	}
 	logrus.WithFields(logrus.Fields{
@@ -48,20 +57,20 @@ func loadQueryResults(path, cryptoKey string) ([]TorrentItem, error) {
 		"encrypted_magnets":  stats.encryptedMagnet,
 		"invalid_magnets":    stats.invalidMagnet,
 		"duration_ms":        time.Since(startedAt).Milliseconds(),
-	}).Info("httpfs query input loaded")
+	}).Info("get query input loaded")
 	return items, nil
 }
 
 func openInput(path string) (io.Reader, func(), error) {
 	if path == "" || path == "-" {
-		logrus.WithField("input", "stdin").Info("httpfs query input opened")
+		logrus.WithField("input", "stdin").Info("get query input opened")
 		return os.Stdin, func() {}, nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open input file %q: %w", path, err)
 	}
-	logrus.WithField("input", path).Info("httpfs query input opened")
+	logrus.WithField("input", path).Info("get query input opened")
 	return file, func() { _ = file.Close() }, nil
 }
 
@@ -74,7 +83,7 @@ type inputStats struct {
 	invalidMagnet   int
 }
 
-func torrentItemFromResult(index int, result model.Torrent, cryptoKey string, stats *inputStats) TorrentItem {
+func torrentItemFromResult(index int, result model.Torrent, encryptor *crypto.StringEncryptor, stats *inputStats) TorrentItem {
 	item := TorrentItem{
 		ID:       fmt.Sprintf("%d", index),
 		Title:    result.Title,
@@ -87,7 +96,7 @@ func torrentItemFromResult(index int, result model.Torrent, cryptoKey string, st
 		Status:   TorrentStatusIdle,
 	}
 
-	magnetURL, encryptedMagnet, magnetErr := resolveMagnet(result.MagnetURL, cryptoKey)
+	magnetURL, encryptedMagnet, magnetErr := resolveMagnet(result.MagnetURL, encryptor)
 	if encryptedMagnet {
 		stats.encryptedMagnet++
 	}
@@ -104,7 +113,7 @@ func torrentItemFromResult(index int, result model.Torrent, cryptoKey string, st
 				"index":    index,
 				"title":    result.Title,
 				"provider": result.Provider,
-			}).Warn("httpfs magnet URL parsed without info hash")
+			}).Warn("get magnet URL parsed without info hash")
 		}
 		stats.ready++
 		return item
@@ -127,19 +136,19 @@ func torrentItemFromResult(index int, result model.Torrent, cryptoKey string, st
 			"index":    index,
 			"title":    result.Title,
 			"provider": result.Provider,
-		}).Warn("httpfs torrent item unavailable")
+		}).Warn("get torrent item unavailable")
 	} else {
 		item.Error = "missing hash and magnetUrl"
 		logrus.WithFields(logrus.Fields{
 			"index":    index,
 			"title":    result.Title,
 			"provider": result.Provider,
-		}).Warn("httpfs torrent item unavailable: missing hash and magnetUrl")
+		}).Warn("get torrent item unavailable: missing hash and magnetUrl")
 	}
 	return item
 }
 
-func resolveMagnet(value *string, cryptoKey string) (string, bool, error) {
+func resolveMagnet(value *string, encryptor *crypto.StringEncryptor) (string, bool, error) {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		return "", false, nil
 	}
@@ -149,14 +158,10 @@ func resolveMagnet(value *string, cryptoKey string) (string, bool, error) {
 		return raw, false, nil
 	}
 
-	if cryptoKey == "" {
+	if encryptor == nil {
 		return "", true, fmt.Errorf("magnetUrl is encrypted but MVDL_CRYKEY is not set")
 	}
-	decryptor, err := crypto.NewStringEncryptor(cryptoKey)
-	if err != nil {
-		return "", true, fmt.Errorf("invalid MVDL_CRYKEY: %w", err)
-	}
-	magnetURL, err := decryptor.DecryptString(raw)
+	magnetURL, err := encryptor.DecryptString(raw)
 	if err != nil {
 		return "", true, fmt.Errorf("decrypt magnetUrl: %w", err)
 	}

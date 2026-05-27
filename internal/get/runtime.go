@@ -1,8 +1,7 @@
-package httpfs
+package get
 
 import (
 	"encoding/hex"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,83 +12,55 @@ import (
 	"github.com/anacrolix/dht/v2/krpc"
 	"github.com/anacrolix/torrent"
 	pp "github.com/anacrolix/torrent/peer_protocol"
-	"github.com/sirupsen/logrus"
 )
 
-const (
-	maxRuntimeEvents      = 160
-	maxPieceSourceHistory = 4
-)
+const maxRuntimeEvents = 160
 
 type RuntimeSnapshot struct {
-	ID      string                `json:"id"`
-	Updated string                `json:"updated"`
-	Summary RuntimeSummary        `json:"summary"`
-	Peers   []RuntimePeer         `json:"peers"`
-	Pieces  []RuntimePiece        `json:"pieces"`
-	DHT     []RuntimeDHTServer    `json:"dht"`
-	Events  []RuntimeTorrentEvent `json:"events"`
+	ID        string                `json:"id"`
+	Updated   string                `json:"updated"`
+	Summary   RuntimeSummary        `json:"summary"`
+	Peers     []RuntimePeer         `json:"peers"`
+	PieceRuns []RuntimePieceRun     `json:"pieceRuns"`
+	DHT       []RuntimeDHTServer    `json:"dht"`
+	Events    []RuntimeTorrentEvent `json:"events"`
 }
 
 type RuntimeSummary struct {
-	InfoHash               string `json:"infoHash,omitempty"`
-	Name                   string `json:"name,omitempty"`
-	MetadataReady          bool   `json:"metadataReady"`
-	BytesCompleted         int64  `json:"bytesCompleted"`
-	BytesMissing           int64  `json:"bytesMissing"`
-	Length                 int64  `json:"length"`
-	TotalPeers             int    `json:"totalPeers"`
-	PendingPeers           int    `json:"pendingPeers"`
-	ActivePeers            int    `json:"activePeers"`
-	ConnectedSeeders       int    `json:"connectedSeeders"`
-	HalfOpenPeers          int    `json:"halfOpenPeers"`
-	PiecesComplete         int    `json:"piecesComplete"`
-	NumPieces              int    `json:"numPieces"`
-	ChunksReadUseful       int64  `json:"chunksReadUseful"`
-	ChunksReadWasted       int64  `json:"chunksReadWasted"`
-	BytesReadData          int64  `json:"bytesReadData"`
-	BytesReadUsefulData    int64  `json:"bytesReadUsefulData"`
-	BytesWrittenData       int64  `json:"bytesWrittenData"`
-	KnownPeers             int    `json:"knownPeers"`
-	ActiveHalfOpenAttempts int    `json:"activeHalfOpenAttempts"`
+	InfoHash            string `json:"infoHash,omitempty"`
+	Name                string `json:"name,omitempty"`
+	MetadataReady       bool   `json:"metadataReady"`
+	BytesCompleted      int64  `json:"bytesCompleted"`
+	Length              int64  `json:"length"`
+	PendingPeers        int    `json:"pendingPeers"`
+	ActivePeers         int    `json:"activePeers"`
+	ConnectedSeeders    int    `json:"connectedSeeders"`
+	HalfOpenPeers       int    `json:"halfOpenPeers"`
+	PiecesComplete      int    `json:"piecesComplete"`
+	NumPieces           int    `json:"numPieces"`
+	ChunksReadUseful    int64  `json:"chunksReadUseful"`
+	ChunksReadWasted    int64  `json:"chunksReadWasted"`
+	BytesReadUsefulData int64  `json:"bytesReadUsefulData"`
+	BytesWrittenData    int64  `json:"bytesWrittenData"`
 }
 
 type RuntimePeer struct {
-	Address             string  `json:"address"`
-	Source              string  `json:"source"`
-	Network             string  `json:"network,omitempty"`
-	Client              string  `json:"client,omitempty"`
-	PeerID              string  `json:"peerId,omitempty"`
-	DownloadRate        float64 `json:"downloadRate"`
-	UploadRate          float64 `json:"uploadRate"`
-	RemotePieceCount    int     `json:"remotePieceCount"`
-	BytesReadData       int64   `json:"bytesReadData"`
-	BytesReadUsefulData int64   `json:"bytesReadUsefulData"`
-	BytesWrittenData    int64   `json:"bytesWrittenData"`
-	ChunksReadUseful    int64   `json:"chunksReadUseful"`
-	ChunksReadWasted    int64   `json:"chunksReadWasted"`
-	Connected           bool    `json:"connected"`
-	SupportsEncryption  bool    `json:"supportsEncryption"`
+	Address      string  `json:"address"`
+	Source       string  `json:"source"`
+	Network      string  `json:"network,omitempty"`
+	Client       string  `json:"client,omitempty"`
+	DownloadRate float64 `json:"downloadRate"`
+	Connected    bool    `json:"connected"`
 }
 
-type RuntimePiece struct {
-	Index      int                `json:"index"`
-	State      string             `json:"state"`
-	Complete   bool               `json:"complete"`
-	Partial    bool               `json:"partial"`
-	Hashing    bool               `json:"hashing"`
-	QueuedHash bool               `json:"queuedHash"`
-	Priority   string             `json:"priority"`
-	LastPeer   *RuntimePiecePeer  `json:"lastPeer,omitempty"`
-	Peers      []RuntimePiecePeer `json:"peers"`
-}
-
-type RuntimePiecePeer struct {
-	Address string `json:"address"`
-	Source  string `json:"source,omitempty"`
-	Network string `json:"network,omitempty"`
-	Client  string `json:"client,omitempty"`
-	Updated string `json:"updated"`
+type RuntimePieceRun struct {
+	Length     int    `json:"length"`
+	State      string `json:"state"`
+	Complete   bool   `json:"complete"`
+	Partial    bool   `json:"partial"`
+	Hashing    bool   `json:"hashing"`
+	QueuedHash bool   `json:"queuedHash"`
+	Priority   string `json:"priority"`
 }
 
 type RuntimeDHTServer struct {
@@ -121,15 +92,13 @@ type RuntimeTorrentEvent struct {
 }
 
 type runtimeCollector struct {
-	mu           sync.Mutex
-	events       map[string][]RuntimeTorrentEvent
-	pieceSources map[string]map[int][]RuntimePiecePeer
+	mu     sync.Mutex
+	events map[string][]RuntimeTorrentEvent
 }
 
 func newRuntimeCollector() *runtimeCollector {
 	return &runtimeCollector{
-		events:       make(map[string][]RuntimeTorrentEvent),
-		pieceSources: make(map[string]map[int][]RuntimePiecePeer),
+		events: make(map[string][]RuntimeTorrentEvent),
 	}
 }
 
@@ -157,15 +126,14 @@ func (c *runtimeCollector) callbacks() torrent.Callbacks {
 }
 
 func (c *runtimeCollector) snapshot(id string, client *torrent.Client, t *torrent.Torrent) RuntimeSnapshot {
-	knownSwarm := torrentKnownSwarm(t)
 	snapshot := RuntimeSnapshot{
-		ID:      id,
-		Updated: time.Now().Format(time.RFC3339),
-		Summary: torrentSummary(client, t, len(knownSwarm)),
-		Peers:   torrentPeers(t, knownSwarm),
-		Pieces:  c.torrentPieces(t),
-		DHT:     dhtServers(client),
-		Events:  c.eventsFor(t.InfoHash().HexString()),
+		ID:        id,
+		Updated:   time.Now().Format(time.RFC3339),
+		Summary:   torrentSummary(client, t),
+		Peers:     torrentPeers(t),
+		PieceRuns: c.torrentPieceRuns(t),
+		DHT:       dhtServers(client),
+		Events:    c.eventsFor(t.InfoHash().HexString()),
 	}
 	snapshot.normalize()
 	return snapshot
@@ -175,8 +143,8 @@ func (s *RuntimeSnapshot) normalize() {
 	if s.Peers == nil {
 		s.Peers = []RuntimePeer{}
 	}
-	if s.Pieces == nil {
-		s.Pieces = []RuntimePiece{}
+	if s.PieceRuns == nil {
+		s.PieceRuns = []RuntimePieceRun{}
 	}
 	if s.DHT == nil {
 		s.DHT = []RuntimeDHTServer{}
@@ -226,7 +194,6 @@ func (c *runtimeCollector) receivedUsefulData(event torrent.ReceivedUsefulDataEv
 	pe.Begin = intPtr(event.Message.Begin.Int())
 	pe.Length = intPtr(len(event.Message.Piece))
 	infoHash := peer.Torrent().InfoHash().HexString()
-	c.recordPiecePeer(infoHash, event.Message.Index.Int(), piecePeer(peer))
 	c.append(infoHash, pe)
 }
 
@@ -296,47 +263,6 @@ func (c *runtimeCollector) eventsFor(infoHash string) []RuntimeTorrentEvent {
 	return out
 }
 
-func (c *runtimeCollector) pieceSourcesFor(infoHash string) map[int][]RuntimePiecePeer {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	sources := c.pieceSources[infoHash]
-	out := make(map[int][]RuntimePiecePeer, len(sources))
-	for piece, peers := range sources {
-		copied := make([]RuntimePiecePeer, len(peers))
-		copy(copied, peers)
-		out[piece] = copied
-	}
-	return out
-}
-
-func (c *runtimeCollector) recordPiecePeer(infoHash string, piece int, peer RuntimePiecePeer) {
-	if infoHash == "" || piece < 0 || peer.Address == "" {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	pieces := c.pieceSources[infoHash]
-	if pieces == nil {
-		pieces = make(map[int][]RuntimePiecePeer)
-		c.pieceSources[infoHash] = pieces
-	}
-
-	peers := pieces[piece]
-	next := []RuntimePiecePeer{peer}
-	for _, existing := range peers {
-		if existing.Address == peer.Address {
-			continue
-		}
-		next = append(next, existing)
-		if len(next) >= maxPieceSourceHistory {
-			break
-		}
-	}
-	pieces[piece] = next
-}
-
 func (c *runtimeCollector) append(infoHash string, event RuntimeTorrentEvent) {
 	if infoHash == "" {
 		return
@@ -354,24 +280,6 @@ func (c *runtimeCollector) append(infoHash string, event RuntimeTorrentEvent) {
 		events = append([]RuntimeTorrentEvent(nil), events[len(events)-maxRuntimeEvents:]...)
 	}
 	c.events[infoHash] = events
-}
-
-func piecePeer(peer *torrent.Peer) RuntimePiecePeer {
-	out := RuntimePiecePeer{
-		Address: peerAddress(peer),
-		Source:  peerSource(peer),
-		Network: peerNetwork(peer),
-		Updated: time.Now().Format(time.RFC3339),
-	}
-	if peer == nil {
-		return out
-	}
-	if pc, ok := peer.TryAsPeerConn(); ok {
-		if clientName, ok := pc.PeerClientName.Load().(string); ok {
-			out.Client = strings.TrimSpace(clientName)
-		}
-	}
-	return out
 }
 
 func peerEvent(eventType string, peer *torrent.Peer) RuntimeTorrentEvent {
@@ -393,18 +301,14 @@ func peerEvent(eventType string, peer *torrent.Peer) RuntimeTorrentEvent {
 	return event
 }
 
-func torrentSummary(client *torrent.Client, t *torrent.Torrent, knownPeers int) RuntimeSummary {
-	clientStats := client.Stats()
+func torrentSummary(client *torrent.Client, t *torrent.Torrent) RuntimeSummary {
 	summary := RuntimeSummary{
-		InfoHash:               t.InfoHash().HexString(),
-		Name:                   t.Name(),
-		KnownPeers:             knownPeers,
-		ActiveHalfOpenAttempts: clientStats.ActiveHalfOpenAttempts,
+		InfoHash: t.InfoHash().HexString(),
+		Name:     t.Name(),
 	}
 	if t.Info() != nil {
 		summary.MetadataReady = true
 		stats := t.Stats()
-		summary.TotalPeers = stats.TotalPeers
 		summary.PendingPeers = stats.PendingPeers
 		summary.ActivePeers = stats.ActivePeers
 		summary.ConnectedSeeders = stats.ConnectedSeeders
@@ -412,64 +316,25 @@ func torrentSummary(client *torrent.Client, t *torrent.Torrent, knownPeers int) 
 		summary.PiecesComplete = stats.PiecesComplete
 		summary.ChunksReadUseful = stats.ChunksReadUseful.Int64()
 		summary.ChunksReadWasted = stats.ChunksReadWasted.Int64()
-		summary.BytesReadData = stats.BytesReadData.Int64()
 		summary.BytesReadUsefulData = stats.BytesReadUsefulData.Int64()
 		summary.BytesWrittenData = stats.BytesWrittenData.Int64()
 		summary.BytesCompleted = t.BytesCompleted()
-		summary.BytesMissing = t.BytesMissing()
 		summary.Length = t.Length()
 		summary.NumPieces = int(t.NumPieces())
 	}
 	return summary
 }
 
-func torrentKnownSwarm(t *torrent.Torrent) (peers []torrent.PeerInfo) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			logrus.WithFields(logrus.Fields{
-				"info_hash": t.InfoHash().HexString(),
-				"panic":     fmt.Sprint(recovered),
-			}).Warn("httpfs runtime known swarm skipped")
-			peers = nil
-		}
-	}()
-	return t.KnownSwarm()
-}
-
-func torrentPeers(t *torrent.Torrent, knownSwarm []torrent.PeerInfo) []RuntimePeer {
-	active := activePeers(t)
-	seen := make(map[string]struct{}, len(active))
-	peers := make([]RuntimePeer, 0, len(active))
-	for _, peer := range active {
-		peers = append(peers, peer)
-		seen[peer.Address] = struct{}{}
-	}
-	for _, peer := range knownSwarm {
-		addr := addrString(peer.Addr)
-		if addr == "" {
-			continue
-		}
-		if _, ok := seen[addr]; ok {
-			continue
-		}
-		peers = append(peers, RuntimePeer{
-			Address:            addr,
-			Source:             string(peer.Source),
-			Connected:          false,
-			SupportsEncryption: peer.SupportsEncryption,
-		})
-	}
+func torrentPeers(t *torrent.Torrent) []RuntimePeer {
+	peers := activePeers(t)
 	sort.SliceStable(peers, func(i, j int) bool {
-		if peers[i].Connected != peers[j].Connected {
-			return peers[i].Connected
-		}
 		if peers[i].DownloadRate != peers[j].DownloadRate {
 			return peers[i].DownloadRate > peers[j].DownloadRate
 		}
 		return peers[i].Address < peers[j].Address
 	})
-	if len(peers) > 80 {
-		return peers[:80]
+	if len(peers) > 30 {
+		return peers[:30]
 	}
 	return peers
 }
@@ -480,20 +345,11 @@ func activePeers(t *torrent.Torrent) []RuntimePeer {
 	for _, conn := range conns {
 		stats := conn.Stats()
 		peer := RuntimePeer{
-			Address:             peerAddress(&conn.Peer),
-			Source:              peerSource(&conn.Peer),
-			Network:             peerNetwork(&conn.Peer),
-			PeerID:              conn.PeerID.String(),
-			DownloadRate:        stats.DownloadRate,
-			UploadRate:          stats.LastWriteUploadRate,
-			RemotePieceCount:    stats.RemotePieceCount,
-			BytesReadData:       stats.BytesReadData.Int64(),
-			BytesReadUsefulData: stats.BytesReadUsefulData.Int64(),
-			BytesWrittenData:    stats.BytesWrittenData.Int64(),
-			ChunksReadUseful:    stats.ChunksReadUseful.Int64(),
-			ChunksReadWasted:    stats.ChunksReadWasted.Int64(),
-			Connected:           true,
-			SupportsEncryption:  conn.PeerPrefersEncryption,
+			Address:      peerAddress(&conn.Peer),
+			Source:       peerSource(&conn.Peer),
+			Network:      peerNetwork(&conn.Peer),
+			DownloadRate: stats.DownloadRate,
+			Connected:    true,
 		}
 		if clientName, ok := conn.PeerClientName.Load().(string); ok {
 			peer.Client = strings.TrimSpace(clientName)
@@ -503,38 +359,22 @@ func activePeers(t *torrent.Torrent) []RuntimePeer {
 	return peers
 }
 
-func (c *runtimeCollector) torrentPieces(t *torrent.Torrent) []RuntimePiece {
+func (c *runtimeCollector) torrentPieceRuns(t *torrent.Torrent) []RuntimePieceRun {
 	if t.Info() == nil {
 		return nil
 	}
 	runs := t.PieceStateRuns()
-	out := make([]RuntimePiece, 0, int(t.NumPieces()))
-	index := 0
-	infoHash := t.InfoHash().HexString()
-	pieceSources := c.pieceSourcesFor(infoHash)
+	out := make([]RuntimePieceRun, 0, len(runs))
 	for _, run := range runs {
-		for i := 0; i < run.Length; i++ {
-			peers := pieceSources[index]
-			if peers == nil {
-				peers = []RuntimePiecePeer{}
-			}
-			var lastPeer *RuntimePiecePeer
-			if len(peers) > 0 {
-				lastPeer = &peers[0]
-			}
-			out = append(out, RuntimePiece{
-				Index:      index,
-				State:      pieceRunState(run),
-				Complete:   run.Complete,
-				Partial:    run.Partial,
-				Hashing:    run.Hashing,
-				QueuedHash: run.QueuedForHash,
-				Priority:   piecePriority(run.Priority),
-				LastPeer:   lastPeer,
-				Peers:      peers,
-			})
-			index++
-		}
+		out = append(out, RuntimePieceRun{
+			Length:     run.Length,
+			State:      pieceRunState(run),
+			Complete:   run.Complete,
+			Partial:    run.Partial,
+			Hashing:    run.Hashing,
+			QueuedHash: run.QueuedForHash,
+			Priority:   piecePriority(run.Priority),
+		})
 	}
 	return out
 }
@@ -576,8 +416,6 @@ func pieceRunState(run torrent.PieceStateRun) string {
 		return "queued_hash"
 	case run.Partial:
 		return "partial"
-	case run.Priority > 0:
-		return "wanted"
 	default:
 		return "empty"
 	}
