@@ -3,6 +3,7 @@ package httpfs
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 
 	"golang.org/x/time/rate"
 
+	dht "github.com/anacrolix/dht/v2"
+	"github.com/anacrolix/dht/v2/krpc"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
@@ -27,6 +30,7 @@ type Manager struct {
 	baseURL string
 	client  *torrent.Client
 	storage storage.ClientImplCloser
+	runtime *runtimeCollector
 
 	mu    sync.Mutex
 	items map[string]*TorrentItem
@@ -37,9 +41,21 @@ func NewManager(items []TorrentItem, dataDir, listenAddr, torrentListenAddr stri
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
+	runtime := newRuntimeCollector()
 	clientStorage := storage.NewFileByInfoHash(filepath.Join(dataDir, "pieces"))
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DefaultStorage = clientStorage
+	cfg.Callbacks = runtime.callbacks()
+	cfg.ConfigureAnacrolixDhtServer = func(cfg *dht.ServerConfig) {
+		onQuery := cfg.OnQuery
+		cfg.OnQuery = func(query *krpc.Msg, source net.Addr) bool {
+			runtime.observeDHTQuery(query, addrString(source))
+			if onQuery != nil {
+				return onQuery(query, source)
+			}
+			return true
+		}
+	}
 	cfg.EstablishedConnsPerTorrent = 200
 	cfg.HalfOpenConnsPerTorrent = 100
 	cfg.TotalHalfOpenConns = 400
@@ -60,6 +76,7 @@ func NewManager(items []TorrentItem, dataDir, listenAddr, torrentListenAddr stri
 		baseURL: publicBaseURL(listenAddr),
 		client:  client,
 		storage: clientStorage,
+		runtime: runtime,
 		items:   make(map[string]*TorrentItem, len(items)),
 	}
 	for i := range items {
@@ -172,7 +189,7 @@ func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent,
 	})
 	m.mu.Unlock()
 
-	logrus.WithFields(fields).Info("httpfs torrent metadata wait started")
+	logrus.WithFields(fields).Debug("httpfs torrent metadata wait started")
 	t, err := m.addTorrent(hash, magnetURL)
 	if err != nil {
 		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
@@ -188,9 +205,27 @@ func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent,
 		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
 		fields["info_hash"] = t.InfoHash().HexString()
 		fields["files"] = len(t.Files())
-		logrus.WithFields(fields).Info("httpfs torrent metadata ready")
+		logrus.WithFields(fields).Debug("httpfs torrent metadata ready")
 		return t, true, nil
 	}
+}
+
+func (m *Manager) RuntimeSnapshot(id string) (RuntimeSnapshot, bool, error) {
+	m.mu.Lock()
+	item, ok := m.items[id]
+	if !ok {
+		m.mu.Unlock()
+		return RuntimeSnapshot{}, false, nil
+	}
+	hash := item.Hash
+	magnetURL := item.MagnetURL
+	m.mu.Unlock()
+
+	t, err := m.addTorrent(hash, magnetURL)
+	if err != nil {
+		return RuntimeSnapshot{}, true, err
+	}
+	return m.runtime.snapshot(id, m.client, t), true, nil
 }
 
 func (m *Manager) loadMetadata(id, requestID string) {

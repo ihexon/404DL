@@ -266,7 +266,9 @@ h1 {
 }
 
 .detailsSection,
-.assetsPanel {
+.assetsPanel,
+.runtimePanel,
+.runtimeSection {
   min-width: 0;
 }
 
@@ -288,6 +290,12 @@ h1 {
 .sectionHeader span {
   color: #57606a;
   font-size: 12px;
+}
+
+.sectionHeader.compact {
+  min-height: 22px;
+  margin-top: 10px;
+  margin-bottom: 6px;
 }
 
 .detailGrid {
@@ -362,6 +370,111 @@ h1 {
 .panelState {
   color: #57606a;
   font-size: 13px;
+}
+
+.runtimePanel {
+  display: grid;
+  gap: 10px;
+}
+
+.runtimeStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 14px;
+  padding: 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.pieceMap {
+  display: flex;
+  width: 100%;
+  height: 18px;
+  overflow: hidden;
+  border: 1px solid #d0d7de;
+  border-radius: 5px;
+  background: #eaeef2;
+}
+
+.pieceRun {
+  min-width: 2px;
+  height: 100%;
+}
+
+.pieceRun.complete {
+  background: #1a7f37;
+}
+
+.pieceRun.partial,
+.pieceRun.wanted,
+.pieceRun.readahead,
+.pieceRun.now {
+  background: #0969da;
+}
+
+.pieceRun.hashing,
+.pieceRun.queued_hash {
+  background: #9a6700;
+}
+
+.pieceRun.empty {
+  background: #d8dee4;
+}
+
+.compactList,
+.peerTable,
+.eventList {
+  overflow: hidden;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.compactRow,
+.peerRow,
+.eventRow {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 7px 9px;
+  color: #24292f;
+  font-size: 12px;
+}
+
+.compactRow {
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+}
+
+.peerRow {
+  grid-template-columns: 18px minmax(160px, 1.4fr) 70px 88px 86px minmax(90px, 1fr);
+}
+
+.eventRow {
+  grid-template-columns: 78px minmax(0, 1fr);
+}
+
+.compactRow + .compactRow,
+.peerRow + .peerRow,
+.eventRow + .eventRow {
+  border-top: 1px solid #d8dee4;
+}
+
+.compactRow svg,
+.peerRow svg {
+  color: #57606a;
+}
+
+.compactRow span,
+.peerRow span,
+.eventRow span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.peerAddress {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 .errorText {
@@ -474,5 +587,16 @@ h1 {
   .assetActions {
     grid-column: 2 / -1;
     justify-content: flex-start;
+  }
+
+  .compactRow,
+  .peerRow,
+  .eventRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compactRow svg,
+  .peerRow svg {
+    display: none;
   }
 }
