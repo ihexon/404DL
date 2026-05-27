@@ -89,20 +89,6 @@ Repeat `--provider` to query a selected set:
 go run ./cmd/server query --provider knaben --provider torrentclaw 真人快打2
 ```
 
-Query TMDb movie or TV search results directly. Results are printed as concise JSON.
-Movie results are sorted by year descending, then `vote_average` descending; TV
-results are sorted by year descending:
-
-```bash
-MVDL_TMDB_APIKEY=your-key go run ./cmd/server tmdb --movie 'Mortal Kombat'
-MVDL_TMDB_APIKEY=your-key go run ./cmd/server tmdb --tv 'Breaking Bad'
-MVDL_TMDB_APIKEY=your-key go run ./cmd/server tmdb --tv --language zh-CN '黑袍纠察队'
-```
-
-TV results include aggregated detail fields such as `number_of_episodes`,
-`number_of_seasons`, `seasons`, and per-season `episodeList`.
-The default TMDb response language is `en-US`.
-
 Generate an AES-256 key for `MVDL_CRYKEY`:
 
 ```bash
@@ -170,8 +156,6 @@ UPSTREAM_TIMEOUT=8s
 KNABEN_API_URL=https://api.knaben.org/v1
 TORRENTCLAW_API_URL=https://torrentclaw.com/api/v1
 TORRENTCLAW_API_KEY=
-MVDL_TMDB_APIKEY=
-TMDB_API_URL=https://api.themoviedb.org/3
 MVDL_CRYKEY=
 ```
 
@@ -183,9 +167,6 @@ TorrentClaw requires an API key for magnet links and `.torrent` download URLs.
 When `MVDL_CRYKEY` is set, every non-empty `magnetUrl` in the JSON response is
 encrypted with AES-256-GCM before it is returned. The key must be exactly 32
 bytes.
-
-`MVDL_TMDB_APIKEY` is used only by the `tmdb` subcommand. It may be either a
-TMDb v3 API key or a TMDb API Read Access Token.
 
 ## Docker
 
