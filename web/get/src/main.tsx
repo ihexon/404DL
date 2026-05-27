@@ -23,14 +23,13 @@ import {
 import "./styles.css";
 
 type TorrentStatus = "unavailable" | "idle" | "loading" | "ready" | "error";
-type FileStatus = "idle" | "cached" | "downloading" | "complete";
+type FileStatus = "idle" | "downloading" | "complete";
 type DownloadTaskStatus = "downloading" | "paused" | "complete" | "canceled";
 
 type FileItem = {
   path: string;
   bytes: number;
   completedBytes: number;
-  cachedBytes: number;
   savePath: string;
   status: FileStatus;
   task?: TaskItem;
@@ -61,6 +60,7 @@ type AppState = {
 
 type TaskItem = {
   id: string;
+  torrentId: string;
   status: DownloadTaskStatus;
   completedBytes: number;
   bytes: number;
@@ -71,7 +71,7 @@ type TorrentState = TorrentItem & {
 };
 
 type RuntimeView = {
-  status: "pending" | "ready" | "error";
+  status: "inactive" | "ready" | "error";
   snapshot?: RuntimeSnapshot;
   error?: string;
 };
@@ -80,6 +80,8 @@ type TorrentStore = {
   items: TorrentState[];
   error: string;
   inFlightCommands: Set<string>;
+  loadMetadata: (item: TorrentState) => Promise<void>;
+  loadTorrent: (id: string) => Promise<void>;
   startDownload: (item: TorrentState, path: string) => Promise<void>;
   runDownloadAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
 };
@@ -189,15 +191,23 @@ const statusLabels: Record<TorrentStatus, string> = {
 };
 
 function App() {
-  const { items, error, inFlightCommands, startDownload, runDownloadAction } = useTorrents();
+  const { items, error, inFlightCommands, loadMetadata, loadTorrent, startDownload, runDownloadAction } = useTorrents();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("");
 
   const visibleItems = useMemo(() => filterTorrents(items, filter), [items, filter]);
 
-  function toggle(item: TorrentItem) {
+  function toggle(item: TorrentState) {
     const willOpen = !expanded[item.id];
     setExpanded((current) => ({ ...current, [item.id]: willOpen }));
+    if (!willOpen) {
+      return;
+    }
+    if (item.status === "idle") {
+      void loadMetadata(item);
+    } else if (item.status !== "unavailable" && item.status !== "error") {
+      void loadTorrent(item.id);
+    }
   }
 
   return (
@@ -233,20 +243,48 @@ function App() {
 
 function useTorrents(): TorrentStore {
   const [state, setState] = useState<AppState | null>(null);
+  const [detailsByID, setDetailsByID] = useState<Map<string, TorrentState>>(() => new Map());
   const [error, setError] = useState("");
   const [inFlightCommands, setInFlightCommands] = useState<Set<string>>(new Set());
   const inFlightCommandsRef = useRef<Set<string>>(new Set());
-  const stateRef = useRef<AppState | null>(null);
+  const detailsRef = useRef<Map<string, TorrentState>>(new Map());
 
   useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    detailsRef.current = detailsByID;
+  }, [detailsByID]);
 
-  const refreshState = useCallback(async () => {
-    const next = await getJSON<AppState>(stateEndpoint());
+  const mergeTorrent = useCallback((next: TorrentState) => {
+    setDetailsByID((current) => {
+      const updated = new Map(current);
+      updated.set(next.id, next);
+      return updated;
+    });
+    setState((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        torrents: current.torrents.map((item) => item.id === next.id ? next : item)
+      };
+    });
+  }, []);
+
+  const refreshList = useCallback(async () => {
+    const next = await getJSON<AppState>(torrentListEndpoint());
+    const details = detailsRef.current;
+    next.torrents = next.torrents.map((item) => mergeListTorrent(item, details.get(item.id)));
     setState(next);
     return next;
   }, []);
+
+  const loadTorrent = useCallback(
+    async (id: string) => {
+      const next = await getJSON<TorrentState>(torrentEndpoint(id));
+      mergeTorrent(next);
+    },
+    [mergeTorrent]
+  );
 
   const showServiceError = useCallback((err: unknown) => {
     setError(serviceErrorMessage(err));
@@ -267,15 +305,41 @@ function useTorrents(): TorrentStore {
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const next = await postJSON<AppState>(torrentFileDownloadEndpoint(item.id), { path });
-        setState(next);
+        const next = await postJSON<TorrentState>(torrentFileDownloadEndpoint(item.id), { path });
+        mergeTorrent(next);
       } catch (err) {
         showServiceError(err);
       } finally {
         clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       }
     },
-    [showServiceError]
+    [mergeTorrent, showServiceError]
+  );
+
+  const loadMetadata = useCallback(
+    async (item: TorrentItem) => {
+      const commandKey = metadataKey(item.id);
+      if (
+        inFlightCommandsRef.current.has(commandKey) ||
+        item.status === "loading" ||
+        item.status === "ready" ||
+        item.status === "unavailable" ||
+        item.status === "error"
+      ) {
+        return;
+      }
+      addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
+      setError("");
+      try {
+        const next = await postJSON<TorrentState>(torrentMetadataEndpoint(item.id), {});
+        mergeTorrent(next);
+      } catch (err) {
+        showServiceError(err);
+      } finally {
+        clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
+      }
+    },
+    [mergeTorrent, showServiceError]
   );
 
   const runDownloadAction = useCallback(
@@ -287,60 +351,64 @@ function useTorrents(): TorrentStore {
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const next = await postJSON<AppState>(downloadActionEndpoint(task.id, action), {});
-        setState(next);
+        const next = await postJSON<TorrentState>(downloadActionEndpoint(task.torrentId, task.id, action), {});
+        mergeTorrent(next);
       } catch (err) {
         showServiceError(err);
       } finally {
         clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       }
     },
-    [showServiceError]
+    [mergeTorrent, showServiceError]
   );
 
   useEffect(() => {
-    void refreshState()
+    void refreshList()
       .catch((err) => setError(serviceErrorMessage(err)));
-  }, [refreshState]);
+  }, [refreshList]);
 
   useEffect(() => {
-    let connected = false;
-    const source = new EventSource(stateStreamEndpoint());
-    source.addEventListener("open", () => {
-      connected = true;
-      setError("");
+    const activeItems = Array.from(detailsByID.values()).filter(
+      (item) => item.status === "loading" || item.downloading || (item.files ?? []).some((file) => file.status === "downloading")
+    );
+    if (activeItems.length === 0) {
+      return;
+    }
+    const sources = activeItems.map((item) => {
+      const source = new EventSource(torrentStreamEndpoint(item.id));
+      source.addEventListener("open", () => setError(""));
+      source.addEventListener("torrent", (event) => {
+        mergeTorrent(JSON.parse(event.data) as TorrentState);
+      });
+      source.addEventListener("error", () => {
+        if (!document.hidden) {
+          void loadTorrent(item.id).catch(showServiceError);
+        }
+      });
+      return source;
     });
-    source.addEventListener("state", (event) => {
-      connected = true;
-      setState(JSON.parse(event.data) as AppState);
-    });
-    source.addEventListener("error", () => {
-      connected = false;
-    });
-
     const interval = window.setInterval(() => {
-      if (connected || document.hidden) {
+      if (document.hidden) {
         return;
       }
-      const items = stateRef.current?.torrents ?? [];
-      const hasActive = items.some(
-        (i) => i.status === "loading" || i.downloading || (i.files ?? []).some((file) => file.status === "downloading")
-      );
-      if (!hasActive) {
-        return;
+      for (const item of activeItems) {
+        void loadTorrent(item.id).catch(showServiceError);
       }
-      void refreshState().catch(showServiceError);
     }, pollIntervalMs);
     return () => {
-      source.close();
+      for (const source of sources) {
+        source.close();
+      }
       window.clearInterval(interval);
     };
-  }, [refreshState, showServiceError]);
+  }, [detailsByID, loadTorrent, mergeTorrent, showServiceError]);
 
   return {
     items: state?.torrents ?? [],
     error,
     inFlightCommands,
+    loadMetadata,
+    loadTorrent,
     startDownload,
     runDownloadAction
   };
@@ -580,6 +648,8 @@ function RuntimePanel({ runtime }: { runtime: RuntimeView }) {
     >
       {runtime.status === "error" ? (
         <PanelEmpty tone="error">{runtime.error || "Runtime unavailable"}</PanelEmpty>
+      ) : runtime.status === "inactive" ? (
+        <PanelEmpty>Runtime inactive</PanelEmpty>
       ) : !snapshot ? (
         <PanelEmpty>Runtime loading</PanelEmpty>
       ) : (
@@ -626,7 +696,7 @@ function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
 function runtimeMeta(runtime: RuntimeView): string {
   if (runtime.status === "error") return "error";
   if (runtime.snapshot) return formatTime(runtime.snapshot.updated);
-  return "loading";
+  return "inactive";
 }
 
 type FlatPiece = {
@@ -763,6 +833,8 @@ function RuntimeDHT({ runtime }: { runtime: RuntimeView }) {
     >
       {runtime.status === "error" ? (
         <PanelEmpty tone="error">{runtime.error || "Runtime unavailable"}</PanelEmpty>
+      ) : runtime.status === "inactive" ? (
+        <PanelEmpty>DHT inactive</PanelEmpty>
       ) : !snapshot ? (
         <PanelEmpty>Runtime loading</PanelEmpty>
       ) : servers.length === 0 ? (
@@ -796,6 +868,8 @@ function RuntimePeers({ runtime }: { runtime: RuntimeView }) {
     >
       {runtime.status === "error" ? (
         <PanelEmpty tone="error">{runtime.error || "Runtime unavailable"}</PanelEmpty>
+      ) : runtime.status === "inactive" ? (
+        <PanelEmpty>No active runtime</PanelEmpty>
       ) : !snapshot ? (
         <PanelEmpty>Runtime loading</PanelEmpty>
       ) : peers.length === 0 ? (
@@ -831,6 +905,8 @@ function RuntimeEvents({ runtime }: { runtime: RuntimeView }) {
     >
       {runtime.status === "error" ? (
         <PanelEmpty tone="error">{runtime.error || "Runtime unavailable"}</PanelEmpty>
+      ) : runtime.status === "inactive" ? (
+        <PanelEmpty>No active runtime</PanelEmpty>
       ) : !snapshot ? (
         <PanelEmpty>Runtime loading</PanelEmpty>
       ) : recent.length === 0 ? (
@@ -1049,7 +1125,7 @@ function FilePanel({
             <button className="iconButton" disabled={!batchAvailability.cancel} onClick={() => { void runBatchAction("cancel"); }} title="Cancel selected">
               <X size={16} />
             </button>
-            <button className="iconButton" disabled={!batchAvailability.delete} onClick={() => { void runBatchAction("delete"); }} title="Delete selected tasks">
+            <button className="iconButton" disabled={!batchAvailability.delete} onClick={() => { void runBatchAction("delete"); }} title="Delete selected files">
               <Trash2 size={16} />
             </button>
           </div>
@@ -1139,16 +1215,13 @@ function canRunTaskAction(task: TaskItem, action: DownloadAction, inFlightComman
     case "resume":
       return task.status === "paused" || task.status === "canceled";
     case "delete":
-      return true;
+      return task.status !== "downloading";
   }
 }
 
 function fileProgressLabel(file: FileItem): string {
   if (file.bytes <= 0) {
     return "-";
-  }
-  if (!file.task && file.status === "cached") {
-    return `Cached ${formatPercent((file.cachedBytes / file.bytes) * 100)} (${formatBytes(file.cachedBytes)})`;
   }
   const completed = file.task?.completedBytes ?? file.completedBytes;
   return `${formatPercent((completed / file.bytes) * 100)} (${formatBytes(completed)})`;
@@ -1159,7 +1232,6 @@ function FileStatePill({ file, task }: { file: FileItem; task?: TaskItem }) {
   if (task?.status === "canceled") return <span className="statePill canceled">Canceled</span>;
   if (file.status === "downloading") return <span className="statePill downloading">Downloading</span>;
   if (file.status === "complete") return <span className="statePill complete">Complete</span>;
-  if (file.status === "cached") return <span className="statePill cached">Cached</span>;
   return null;
 }
 
@@ -1185,12 +1257,12 @@ function DownloadTaskActions({
     return (
       <>
         <TaskActionButton action="resume" busy={busy("resume")} task={task} icon={<Play size={16} />} onAction={onAction} title="Resume" />
-        <TaskActionButton action="delete" busy={busy("delete")} task={task} icon={<Trash2 size={16} />} onAction={onAction} title="Delete task" />
+        <TaskActionButton action="delete" busy={busy("delete")} task={task} icon={<Trash2 size={16} />} onAction={onAction} title="Delete file" />
       </>
     );
   }
   return (
-    <TaskActionButton action="delete" busy={busy("delete")} task={task} icon={<Trash2 size={16} />} onAction={onAction} title="Delete task" />
+    <TaskActionButton action="delete" busy={busy("delete")} task={task} icon={<Trash2 size={16} />} onAction={onAction} title="Delete file" />
   );
 }
 
@@ -1286,8 +1358,25 @@ function filterTorrents(items: TorrentState[], filter: string): TorrentState[] {
   );
 }
 
+function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): TorrentState {
+  if (!detailItem) {
+    return listItem;
+  }
+  if (detailItem.status === "ready" && (detailItem.files ?? []).length > 0) {
+    return detailItem;
+  }
+  if (listItem.status !== detailItem.status || listItem.downloading !== detailItem.downloading) {
+    return listItem;
+  }
+  return detailItem;
+}
+
 function downloadKey(id: string, path = ""): string {
   return `${id}\0${path}`;
+}
+
+function metadataKey(id: string): string {
+  return `${id}\0metadata`;
 }
 
 function taskCommandKey(id: string, action: DownloadAction): string {
@@ -1319,24 +1408,28 @@ function clearInFlightCommand(
   });
 }
 
-function stateEndpoint(): string {
-  return "/api/state";
+function torrentListEndpoint(): string {
+  return "/api/torrents";
 }
 
-function stateStreamEndpoint(): string {
-  return "/api/state/stream";
-}
-
-function torrentURL(id: string): string {
+function torrentEndpoint(id: string): string {
   return `/api/torrents/${encodeURIComponent(id)}`;
 }
 
-function torrentFileDownloadEndpoint(id: string): string {
-  return `${torrentURL(id)}/files/download`;
+function torrentMetadataEndpoint(id: string): string {
+  return `${torrentEndpoint(id)}/metadata`;
 }
 
-function downloadActionEndpoint(id: string, action: DownloadAction): string {
-  return `/api/downloads/${encodeURIComponent(id)}/${action}`;
+function torrentFileDownloadEndpoint(id: string): string {
+  return `${torrentEndpoint(id)}/files/download`;
+}
+
+function torrentStreamEndpoint(id: string): string {
+  return `${torrentEndpoint(id)}/stream`;
+}
+
+function downloadActionEndpoint(torrentID: string, taskID: string, action: DownloadAction): string {
+  return `${torrentEndpoint(torrentID)}/downloads/${encodeURIComponent(taskID)}/${action}`;
 }
 
 async function getJSON<T>(url: string): Promise<T> {

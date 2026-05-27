@@ -698,12 +698,6 @@ h1 {
   color: #1a7f37;
 }
 
-.statePill.cached {
-  border-color: #d0d7de;
-  background: #f6f8fa;
-  color: #57606a;
-}
-
 .statePill.paused {
   border-color: #d4a72c;
   background: #fff8c5;
