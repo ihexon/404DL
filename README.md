@@ -109,7 +109,8 @@ The UI shows:
 - Files from loaded torrent metadata.
 - File-level `Download` buttons that download directly through BitTorrent.
 - Gmail-style file selection for applying download task actions to selected files.
-- Download task actions for pausing, resuming, canceling, and deleting tasks.
+- Download task actions for pausing, resuming, canceling, and deleting the
+  task's saved file.
 - Runtime diagnostics: Peers, DHT, Events, and Pieces.
 - A virtualized piece grid where one box is one real BitTorrent piece from the
   torrent-level anacrolix state.
@@ -120,19 +121,21 @@ anacrolix for diagnostics. The UI colors pieces by actual torrent state.
 get API:
 
 ```text
-GET /api/state
-GET /api/state/stream
+GET /api/torrents
+GET /api/torrents/{id}
+GET /api/torrents/{id}/stream
+POST /api/torrents/{id}/metadata
 POST /api/torrents/{id}/files/download
-POST /api/downloads/{id}/pause
-POST /api/downloads/{id}/resume
-POST /api/downloads/{id}/cancel
-POST /api/downloads/{id}/delete
+POST /api/torrents/{id}/downloads/{downloadID}/pause
+POST /api/torrents/{id}/downloads/{downloadID}/resume
+POST /api/torrents/{id}/downloads/{downloadID}/cancel
+POST /api/torrents/{id}/downloads/{downloadID}/delete
 ```
 
-`/api/state` is the canonical read model for the web UI. Command endpoints
-schedule BitTorrent work and return the same full state model. `/api/state/stream`
-is an SSE stream that pushes full state snapshots for live progress updates; the
-frontend falls back to polling `/api/state` if the stream is unavailable.
+`/api/torrents` is a cheap list endpoint and does not add torrents to the
+BitTorrent runtime. Metadata loading, runtime diagnostics, file state, and
+download task actions belong to `/api/torrents/{id}`. The per-torrent SSE stream
+pushes live updates only for active torrents.
 
 ## Configuration
 

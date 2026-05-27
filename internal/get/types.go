@@ -22,7 +22,6 @@ type FileStatus string
 
 const (
 	FileStatusIdle        FileStatus = "idle"
-	FileStatusCached      FileStatus = "cached"
 	FileStatusDownloading FileStatus = "downloading"
 	FileStatusComplete    FileStatus = "complete"
 )
@@ -67,9 +66,9 @@ type TorrentState struct {
 type RuntimeStatus string
 
 const (
-	RuntimeStatusPending RuntimeStatus = "pending"
-	RuntimeStatusReady   RuntimeStatus = "ready"
-	RuntimeStatusError   RuntimeStatus = "error"
+	RuntimeStatusInactive RuntimeStatus = "inactive"
+	RuntimeStatusReady    RuntimeStatus = "ready"
+	RuntimeStatusError    RuntimeStatus = "error"
 )
 
 type RuntimeView struct {
@@ -82,7 +81,6 @@ type FileItem struct {
 	Path           string     `json:"path"`
 	Bytes          int64      `json:"bytes"`
 	CompletedBytes int64      `json:"completedBytes"`
-	CachedBytes    int64      `json:"cachedBytes"`
 	SavePath       string     `json:"savePath"`
 	Status         FileStatus `json:"status"`
 	Task           *TaskItem  `json:"task,omitempty"`
@@ -90,13 +88,10 @@ type FileItem struct {
 
 type TaskItem struct {
 	ID             string             `json:"id"`
+	TorrentID      string             `json:"torrentId"`
 	Status         DownloadTaskStatus `json:"status"`
 	CompletedBytes int64              `json:"completedBytes"`
 	Bytes          int64              `json:"bytes"`
-}
-
-type DeleteDownloadRequest struct {
-	DeleteFiles bool `json:"deleteFiles"`
 }
 
 type APIError struct {
