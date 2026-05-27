@@ -11,6 +11,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"mvdl/internal/magnet"
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
 )
@@ -54,24 +55,14 @@ type SearchResponse struct {
 }
 
 type torrent struct {
-	Bytes          int64    `json:"bytes"`
-	CachedOrigin   string   `json:"cachedOrigin,omitempty"`
-	Category       string   `json:"category,omitempty"`
-	CategoryID     []int    `json:"categoryId,omitempty"`
-	Date           string   `json:"date,omitempty"`
-	Details        string   `json:"details,omitempty"`
-	Hash           *string  `json:"hash"`
-	ID             string   `json:"id,omitempty"`
-	LastSeen       string   `json:"lastSeen,omitempty"`
-	Link           *string  `json:"link,omitempty"`
-	MagnetURL      *string  `json:"magnetUrl,omitempty"`
-	Peers          int      `json:"peers"`
-	Score          *float64 `json:"score"`
-	Seeders        int      `json:"seeders"`
-	Title          string   `json:"title"`
-	Tracker        string   `json:"tracker,omitempty"`
-	TrackerID      string   `json:"trackerId,omitempty"`
-	VirusDetection float64  `json:"virusDetection,omitempty"`
+	Bytes     int64   `json:"bytes"`
+	Category  string  `json:"category,omitempty"`
+	Date      string  `json:"date,omitempty"`
+	Hash      *string `json:"hash"`
+	MagnetURL *string `json:"magnetUrl,omitempty"`
+	Peers     int     `json:"peers"`
+	Seeders   int     `json:"seeders"`
+	Title     string  `json:"title"`
 }
 
 func (c *Client) Name() string {
@@ -105,22 +96,15 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	out := make([]model.Torrent, 0, len(hits))
 	for _, hit := range hits {
 		out = append(out, model.Torrent{
-			Provider:       c.Name(),
-			Title:          hit.Title,
-			Bytes:          hit.Bytes,
-			Category:       hit.Category,
-			Date:           hit.Date,
-			Details:        hit.Details,
-			Hash:           hit.Hash,
-			ID:             hit.ID,
-			LastSeen:       hit.LastSeen,
-			Link:           hit.Link,
-			MagnetURL:      hit.MagnetURL,
-			Peers:          hit.Peers,
-			Seeders:        hit.Seeders,
-			Tracker:        hit.Tracker,
-			TrackerID:      hit.TrackerID,
-			VirusDetection: &hit.VirusDetection,
+			Provider:  c.Name(),
+			Title:     hit.Title,
+			Bytes:     hit.Bytes,
+			Category:  hit.Category,
+			Date:      hit.Date,
+			Hash:      hit.Hash,
+			MagnetURL: magnet.NormalizeURLPtr(hit.MagnetURL),
+			Peers:     hit.Peers,
+			Seeders:   hit.Seeders,
 		})
 	}
 

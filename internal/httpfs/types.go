@@ -1,7 +1,5 @@
 package httpfs
 
-import "mvdl/internal/model"
-
 type Config struct {
 	ListenAddr        string
 	InputPath         string
@@ -21,14 +19,19 @@ const (
 )
 
 type TorrentItem struct {
-	ID           string        `json:"id"`
-	Source       model.Torrent `json:"source"`
-	Hash         string        `json:"hash,omitempty"`
-	MagnetURL    string        `json:"magnetUrl,omitempty"`
-	Status       TorrentStatus `json:"status"`
-	Error        string        `json:"error,omitempty"`
-	Files        []FileItem    `json:"files,omitempty"`
-	DownloadBase string        `json:"downloadBase,omitempty"`
+	ID        string        `json:"id"`
+	Title     string        `json:"title"`
+	Provider  string        `json:"provider"`
+	Bytes     int64         `json:"bytes,omitempty"`
+	Category  string        `json:"category,omitempty"`
+	Date      string        `json:"date,omitempty"`
+	Seeders   int           `json:"seeders"`
+	Peers     int           `json:"peers"`
+	Hash      string        `json:"hash,omitempty"`
+	MagnetURL string        `json:"magnetUrl,omitempty"`
+	Status    TorrentStatus `json:"status"`
+	Error     string        `json:"error,omitempty"`
+	Files     []FileItem    `json:"files,omitempty"`
 }
 
 type FileItem struct {

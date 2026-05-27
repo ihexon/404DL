@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -125,7 +126,8 @@ func dedupe(torrents []model.Torrent) []model.Torrent {
 	for _, torrent := range torrents {
 		key := dedupeKey(torrent)
 		if key == "" {
-			key = torrent.Provider + ":" + strings.ToLower(torrent.Title)
+			deduped = append(deduped, torrent)
+			continue
 		}
 		pos, ok := positions[key]
 		if ok {
@@ -141,14 +143,29 @@ func dedupe(torrents []model.Torrent) []model.Torrent {
 }
 
 func dedupeKey(torrent model.Torrent) string {
-	if torrent.Hash != nil && *torrent.Hash != "" {
-		return "hash:" + strings.ToLower(*torrent.Hash)
+	if torrent.Hash != nil {
+		hash := strings.TrimSpace(*torrent.Hash)
+		if hash != "" {
+			return "hash:" + strings.ToLower(hash)
+		}
 	}
-	if torrent.MagnetURL != nil && *torrent.MagnetURL != "" {
-		return "magnet:" + strings.ToLower(*torrent.MagnetURL)
+	if torrent.MagnetURL != nil {
+		magnetURL := strings.TrimSpace(*torrent.MagnetURL)
+		if magnetURL != "" {
+			return "magnet:" + strings.ToLower(magnetURL)
+		}
 	}
-	if torrent.ID != "" {
-		return torrent.Provider + ":id:" + strings.ToLower(torrent.ID)
+	title := strings.ToLower(strings.TrimSpace(torrent.Title))
+	if title == "" {
+		return ""
 	}
-	return ""
+	parts := []string{
+		"torrent",
+		strings.ToLower(strings.TrimSpace(torrent.Provider)),
+		title,
+	}
+	if torrent.Bytes > 0 {
+		parts = append(parts, strconv.FormatInt(torrent.Bytes, 10))
+	}
+	return strings.Join(parts, ":")
 }

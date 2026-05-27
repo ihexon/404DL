@@ -10,6 +10,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 
 	"mvdl/internal/crypto"
+	"mvdl/internal/magnet"
 	"mvdl/internal/model"
 )
 
@@ -47,9 +48,15 @@ func openInput(path string) (io.Reader, func(), error) {
 
 func torrentItemFromResult(index int, result model.Torrent, cryptoKey string) TorrentItem {
 	item := TorrentItem{
-		ID:     fmt.Sprintf("%d", index),
-		Source: result,
-		Status: TorrentStatusIdle,
+		ID:       fmt.Sprintf("%d", index),
+		Title:    result.Title,
+		Provider: result.Provider,
+		Bytes:    result.Bytes,
+		Category: result.Category,
+		Date:     result.Date,
+		Seeders:  result.Seeders,
+		Peers:    result.Peers,
+		Status:   TorrentStatusIdle,
 	}
 
 	magnetURL, magnetErr := resolveMagnet(result.MagnetURL, cryptoKey)
@@ -83,8 +90,8 @@ func resolveMagnet(value *string, cryptoKey string) (string, error) {
 		return "", nil
 	}
 
-	raw := strings.TrimSpace(*value)
-	if strings.HasPrefix(raw, "magnet:") {
+	raw := magnet.NormalizeURL(*value)
+	if magnet.HasScheme(raw) {
 		return raw, nil
 	}
 
@@ -99,7 +106,7 @@ func resolveMagnet(value *string, cryptoKey string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("decrypt magnetUrl: %w", err)
 	}
-	if !strings.HasPrefix(magnetURL, "magnet:") {
+	if !magnet.HasScheme(magnetURL) {
 		return "", fmt.Errorf("decrypted magnetUrl is not a magnet URL")
 	}
 	return magnetURL, nil

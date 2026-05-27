@@ -13,7 +13,7 @@ WEB_DIR ?= web/httpfs
 WEB_STATIC_DIR ?= internal/httpfs/static
 BIN_PATH := $(BUILD_DIR)/$(BINARY)
 
-.PHONY: build binary clean clean-binary clean-web go-binary test web web-deps
+.PHONY: build binary clean clean-binary clean-web web web-deps
 
 build: binary
 
@@ -23,14 +23,9 @@ web: web-deps
 web-deps:
 	cd $(WEB_DIR) && $(NPM) ci
 
-binary: web go-binary
-
-go-binary:
+binary: web
 	mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_PATH) $(CMD)
-
-test:
-	$(GO) test ./...
 
 clean: clean-binary clean-web
 
