@@ -8,16 +8,6 @@ type Config struct {
 	CryptoKey         string
 }
 
-type TorrentStatus string
-
-const (
-	TorrentStatusUnavailable TorrentStatus = "unavailable"
-	TorrentStatusIdle        TorrentStatus = "idle"
-	TorrentStatusLoading     TorrentStatus = "loading"
-	TorrentStatusReady       TorrentStatus = "ready"
-	TorrentStatusError       TorrentStatus = "error"
-)
-
 type FileStatus string
 
 const (
@@ -26,30 +16,36 @@ const (
 	FileStatusComplete    FileStatus = "complete"
 )
 
-type DownloadTaskStatus string
+type TorrentDownloadStatus string
 
 const (
-	DownloadTaskStatusDownloading DownloadTaskStatus = "downloading"
-	DownloadTaskStatusPaused      DownloadTaskStatus = "paused"
-	DownloadTaskStatusComplete    DownloadTaskStatus = "complete"
-	DownloadTaskStatusCanceled    DownloadTaskStatus = "canceled"
+	TorrentDownloadStatusIdle        TorrentDownloadStatus = "idle"
+	TorrentDownloadStatusDownloading TorrentDownloadStatus = "downloading"
+	TorrentDownloadStatusPaused      TorrentDownloadStatus = "paused"
+	TorrentDownloadStatusComplete    TorrentDownloadStatus = "complete"
 )
 
 type TorrentItem struct {
-	ID          string        `json:"id"`
-	Title       string        `json:"title"`
-	Provider    string        `json:"provider"`
-	Bytes       int64         `json:"bytes,omitempty"`
-	Category    string        `json:"category,omitempty"`
-	Date        string        `json:"date,omitempty"`
-	Seeders     int           `json:"seeders"`
-	Peers       int           `json:"peers"`
-	Hash        string        `json:"hash,omitempty"`
-	MagnetURL   string        `json:"magnetUrl,omitempty"`
-	Status      TorrentStatus `json:"status"`
-	Downloading bool          `json:"downloading"`
-	Error       string        `json:"error,omitempty"`
-	Files       []FileItem    `json:"files,omitempty"`
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Provider    string       `json:"provider"`
+	Bytes       int64        `json:"bytes,omitempty"`
+	Category    string       `json:"category,omitempty"`
+	Date        string       `json:"date,omitempty"`
+	Seeders     int          `json:"seeders"`
+	Peers       int          `json:"peers"`
+	Hash        string       `json:"hash,omitempty"`
+	MagnetURL   string       `json:"magnetUrl,omitempty"`
+	Downloading bool         `json:"downloading"`
+	Download    DownloadView `json:"download"`
+	Error       string       `json:"error,omitempty"`
+	Files       []FileItem   `json:"files,omitempty"`
+}
+
+type DownloadView struct {
+	Status         TorrentDownloadStatus `json:"status"`
+	CompletedBytes int64                 `json:"completedBytes"`
+	Bytes          int64                 `json:"bytes"`
 }
 
 type AppState struct {
@@ -83,21 +79,8 @@ type FileItem struct {
 	CompletedBytes int64      `json:"completedBytes"`
 	SavePath       string     `json:"savePath"`
 	Status         FileStatus `json:"status"`
-	Task           *TaskItem  `json:"task,omitempty"`
-}
-
-type TaskItem struct {
-	ID             string             `json:"id"`
-	TorrentID      string             `json:"torrentId"`
-	Status         DownloadTaskStatus `json:"status"`
-	CompletedBytes int64              `json:"completedBytes"`
-	Bytes          int64              `json:"bytes"`
 }
 
 type APIError struct {
 	Error string `json:"error"`
-}
-
-type FileDownloadRequest struct {
-	Path string `json:"path"`
 }

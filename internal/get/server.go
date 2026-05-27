@@ -98,12 +98,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/torrents", s.handleListTorrents)
 	mux.HandleFunc("GET /api/torrents/{id}", s.handleGetTorrent)
 	mux.HandleFunc("GET /api/torrents/{id}/stream", s.handleStreamTorrent)
-	mux.HandleFunc("POST /api/torrents/{id}/metadata", s.handleLoadMetadata)
-	mux.HandleFunc("POST /api/torrents/{id}/files/download", s.handleDownloadFile)
-	mux.HandleFunc("POST /api/torrents/{id}/downloads/{downloadID}/pause", s.handlePauseDownload)
-	mux.HandleFunc("POST /api/torrents/{id}/downloads/{downloadID}/resume", s.handleResumeDownload)
-	mux.HandleFunc("POST /api/torrents/{id}/downloads/{downloadID}/cancel", s.handleCancelDownload)
-	mux.HandleFunc("POST /api/torrents/{id}/downloads/{downloadID}/delete", s.handleDeleteDownload)
+	mux.HandleFunc("POST /api/torrents/{id}/start", s.handleStartDownload)
+	mux.HandleFunc("POST /api/torrents/{id}/pause", s.handlePauseDownload)
+	mux.HandleFunc("POST /api/torrents/{id}/delete", s.handleDeleteDownload)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return requestLogger(mux)
 }
@@ -189,27 +186,26 @@ func (s *Server) writeTorrentEvent(w http.ResponseWriter, flusher http.Flusher, 
 	return true
 }
 
-func (s *Server) handleLoadMetadata(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleStartDownload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	_, ok := s.manager.EnsureFiles(r.Context(), id)
+	_, ok, err := s.manager.StartDownload(r.Context(), id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, APIError{Error: "torrent not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
 		return
 	}
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
 		"id": id,
-	})).Info("get torrent metadata requested")
+	})).Info("get torrent download started")
 	writeTorrentState(w, r, s.manager, id, http.StatusAccepted)
 }
 
-func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePauseDownload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var req FileDownloadRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, APIError{Error: err.Error()})
-		return
-	}
-	_, ok, err := s.manager.DownloadFile(r.Context(), id, req.Path)
+	_, ok, err := s.manager.PauseDownload(r.Context(), id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, APIError{Error: "torrent not found"})
 		return
@@ -219,84 +215,16 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id":   id,
-		"file": req.Path,
-	})).Info("get file download scheduled")
-	writeTorrentState(w, r, s.manager, id, http.StatusAccepted)
-}
-
-func (s *Server) handlePauseDownload(w http.ResponseWriter, r *http.Request) {
-	torrentID := r.PathValue("id")
-	downloadID := r.PathValue("downloadID")
-	if !taskBelongsToTorrent(w, s.manager, torrentID, downloadID) {
-		return
-	}
-	ok, err := s.manager.PauseDownload(r.Context(), downloadID)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, APIError{Error: "download not found"})
-		return
-	}
-	if err != nil {
-		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
-		return
-	}
-	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id": downloadID,
-	})).Info("get download paused")
-	writeTorrentState(w, r, s.manager, torrentID, http.StatusOK)
-}
-
-func (s *Server) handleResumeDownload(w http.ResponseWriter, r *http.Request) {
-	torrentID := r.PathValue("id")
-	downloadID := r.PathValue("downloadID")
-	if !taskBelongsToTorrent(w, s.manager, torrentID, downloadID) {
-		return
-	}
-	ok, err := s.manager.ResumeDownload(r.Context(), downloadID)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, APIError{Error: "download not found"})
-		return
-	}
-	if err != nil {
-		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
-		return
-	}
-	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id": downloadID,
-	})).Info("get download resumed")
-	writeTorrentState(w, r, s.manager, torrentID, http.StatusOK)
-}
-
-func (s *Server) handleCancelDownload(w http.ResponseWriter, r *http.Request) {
-	torrentID := r.PathValue("id")
-	downloadID := r.PathValue("downloadID")
-	if !taskBelongsToTorrent(w, s.manager, torrentID, downloadID) {
-		return
-	}
-	ok, err := s.manager.CancelDownload(r.Context(), downloadID)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, APIError{Error: "download not found"})
-		return
-	}
-	if err != nil {
-		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
-		return
-	}
-	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id": downloadID,
-	})).Info("get download canceled")
-	writeTorrentState(w, r, s.manager, torrentID, http.StatusOK)
+		"id": id,
+	})).Info("get torrent download paused")
+	writeTorrentState(w, r, s.manager, id, http.StatusOK)
 }
 
 func (s *Server) handleDeleteDownload(w http.ResponseWriter, r *http.Request) {
-	torrentID := r.PathValue("id")
-	downloadID := r.PathValue("downloadID")
-	if !taskBelongsToTorrent(w, s.manager, torrentID, downloadID) {
-		return
-	}
-	ok, err := s.manager.DeleteDownload(r.Context(), downloadID)
+	id := r.PathValue("id")
+	_, ok, err := s.manager.DeleteDownload(r.Context(), id)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, APIError{Error: "download not found"})
+		writeJSON(w, http.StatusNotFound, APIError{Error: "torrent not found"})
 		return
 	}
 	if err != nil {
@@ -304,22 +232,9 @@ func (s *Server) handleDeleteDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id": downloadID,
-	})).Info("get download deleted")
-	writeTorrentState(w, r, s.manager, torrentID, http.StatusOK)
-}
-
-func taskBelongsToTorrent(w http.ResponseWriter, manager *Manager, torrentID, taskID string) bool {
-	taskTorrentID, ok := manager.TaskTorrentID(taskID)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, APIError{Error: "download not found"})
-		return false
-	}
-	if taskTorrentID != torrentID {
-		writeJSON(w, http.StatusNotFound, APIError{Error: "download not found"})
-		return false
-	}
-	return true
+		"id": id,
+	})).Info("get torrent download deleted")
+	writeTorrentState(w, r, s.manager, id, http.StatusOK)
 }
 
 func writeTorrentState(w http.ResponseWriter, r *http.Request, manager *Manager, torrentID string, status int) {
@@ -362,23 +277,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	_ = encoder.Encode(value)
-}
-
-func decodeJSON(r *http.Request, value any) error {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		return fmt.Errorf("decode request body: %w", err)
-	}
-	return nil
-}
-
-func decodeOptionalJSON(r *http.Request, value any) error {
-	if r.Body == nil || r.ContentLength == 0 {
-		return nil
-	}
-	return decodeJSON(r, value)
 }
 
 func writeSSE(w http.ResponseWriter, event string, value any) error {

@@ -233,6 +233,21 @@ h1 {
   color: #1a7f37;
 }
 
+.torrentAction.start:not(:disabled) {
+  border-color: #a6e3b7;
+  color: #1a7f37;
+}
+
+.torrentAction.pause:not(:disabled) {
+  border-color: #d4a72c;
+  color: #7d4e00;
+}
+
+.torrentAction.delete:not(:disabled) {
+  border-color: #ffcecb;
+  color: #cf222e;
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -247,30 +262,10 @@ h1 {
   white-space: nowrap;
 }
 
-.status.idle,
-.status.loading {
-  border-color: #d0d7de;
-  background: #f6f8fa;
-  color: #57606a;
-}
-
-.status.ready {
-  border-color: #a6e3b7;
-  background: #dafbe1;
-  color: #1a7f37;
-}
-
 .status.downloading {
   border-color: #9ec5fe;
   background: #ddf4ff;
   color: #0969da;
-}
-
-.status.error,
-.status.unavailable {
-  border-color: #ffcecb;
-  background: #ffebe9;
-  color: #cf222e;
 }
 
 .spinner {
@@ -584,66 +579,15 @@ h1 {
   width: 100%;
 }
 
-.fileToolbar {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 6px 10px;
-  border-bottom: 1px solid #d8dee4;
-  background: #f6f8fa;
-}
-
-.selectionMeta {
-  color: #57606a;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.bulkActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
 .assetRow {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   padding: 10px;
 }
 
-.assetRow.selected {
-  background: #f6f8fa;
-}
-
 .assetRow + .assetRow {
   border-top: 1px solid #d8dee4;
-}
-
-.assetSelect {
-  display: inline-flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 2px;
-}
-
-.selectControl {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-}
-
-.selectControl input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: #0969da;
-  cursor: pointer;
 }
 
 .assetBody {
@@ -684,8 +628,6 @@ h1 {
   color: #0969da;
 }
 
-.statePill.paused,
-.statePill.canceled,
 .statePill.complete {
   border-color: #d0d7de;
   background: #f6f8fa;
@@ -696,18 +638,6 @@ h1 {
   border-color: #a6e3b7;
   background: #dafbe1;
   color: #1a7f37;
-}
-
-.statePill.paused {
-  border-color: #d4a72c;
-  background: #fff8c5;
-  color: #7d4e00;
-}
-
-.statePill.canceled {
-  border-color: #ffcecb;
-  background: #ffebe9;
-  color: #cf222e;
 }
 
 .assetPath {
@@ -771,20 +701,10 @@ h1 {
   }
 
   .assetRow {
-    grid-template-columns: 28px minmax(0, 1fr);
-  }
-
-  .fileToolbar {
-    grid-template-columns: 28px minmax(0, 1fr);
-  }
-
-  .bulkActions {
-    grid-column: 2 / -1;
-    justify-content: flex-start;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .assetActions {
-    grid-column: 2 / -1;
     justify-content: flex-start;
   }
 
