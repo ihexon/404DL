@@ -152,7 +152,9 @@ func parseTorrentQuery(r *http.Request) torrentPathParams {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(v)
 }
 
 func writeError(w http.ResponseWriter, status int, code, msg string) {

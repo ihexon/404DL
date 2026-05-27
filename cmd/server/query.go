@@ -40,6 +40,7 @@ func runSearch(c *cli.Context) error {
 	}
 
 	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(hits)
 }

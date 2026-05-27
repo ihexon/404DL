@@ -61,9 +61,6 @@ func NewManager(items []TorrentItem, dataDir, listenAddr, torrentListenAddr stri
 	}
 	for i := range items {
 		item := items[i]
-		if item.Hash != "" {
-			item.DownloadBase = manager.downloadBase(item.Hash)
-		}
 		manager.items[item.ID] = &item
 	}
 	return manager, nil
@@ -83,10 +80,10 @@ func (m *Manager) List() []TorrentItem {
 		out = append(out, cloneItem(item))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		left := out[i].Source.Seeders
-		right := out[j].Source.Seeders
+		left := out[i].Seeders
+		right := out[j].Seeders
 		if left == right {
-			return strings.ToLower(out[i].Source.Title) < strings.ToLower(out[j].Source.Title)
+			return strings.ToLower(out[i].Title) < strings.ToLower(out[j].Title)
 		}
 		return left > right
 	})
@@ -216,10 +213,6 @@ func isFinalStatus(status TorrentStatus) bool {
 	return status == TorrentStatusReady ||
 		status == TorrentStatusError ||
 		status == TorrentStatusUnavailable
-}
-
-func (m *Manager) downloadBase(id string) string {
-	return "/d/" + url.PathEscape(id) + "/"
 }
 
 func (m *Manager) downloadURL(id, filePath string) string {

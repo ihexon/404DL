@@ -1,29 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Calendar,
   Check,
   ChevronDown,
   ChevronRight,
+  Database,
   Download,
-  Hash,
+  FileText,
+  HardDrive,
   Link,
-  Search
+  Magnet,
+  Search,
+  Users
 } from "lucide-react";
 import "./styles.css";
 
 type TorrentStatus = "unavailable" | "idle" | "loading" | "ready" | "error";
-
-type SourceTorrent = {
-  provider: string;
-  title: string;
-  bytes?: number;
-  category?: string;
-  date?: string;
-  hash?: string | null;
-  magnetUrl?: string | null;
-  peers: number;
-  seeders: number;
-};
 
 type FileItem = {
   path: string;
@@ -33,13 +26,18 @@ type FileItem = {
 
 type TorrentItem = {
   id: string;
-  source: SourceTorrent;
+  title: string;
+  provider: string;
+  bytes?: number;
+  category?: string;
+  date?: string;
+  seeders: number;
+  peers: number;
   hash?: string;
   magnetUrl?: string;
   status: TorrentStatus;
   error?: string;
   files?: FileItem[];
-  downloadBase?: string;
 };
 
 type TorrentStore = {
@@ -104,7 +102,7 @@ function App() {
 
       {error && <div className="banner">{error}</div>}
 
-      <TorrentTable
+      <TorrentList
         items={visibleItems}
         expanded={expanded}
         onToggle={toggle}
@@ -190,7 +188,7 @@ function useTorrents(): TorrentStore {
   return { items, error, startMetadata };
 }
 
-function TorrentTable({
+function TorrentList({
   items,
   expanded,
   onToggle
@@ -200,18 +198,10 @@ function TorrentTable({
   onToggle: (item: TorrentItem) => void;
 }) {
   return (
-    <section className="table">
-      <div className="row head">
-        <span />
-        <span>Title</span>
-        <span>Size</span>
-        <span>Date</span>
-        <span>Peers</span>
-        <span>Status</span>
-        <span />
-      </div>
+    <section className="torrentList" aria-label="Torrents">
+      {items.length === 0 && <div className="emptyBox">No torrents</div>}
       {items.map((item) => (
-        <TorrentRow
+        <TorrentCard
           key={item.id}
           item={item}
           open={Boolean(expanded[item.id])}
@@ -222,7 +212,7 @@ function TorrentTable({
   );
 }
 
-function TorrentRow({
+function TorrentCard({
   item,
   open,
   onToggle
@@ -232,32 +222,124 @@ function TorrentRow({
   onToggle: () => void;
 }) {
   return (
-    <>
-      <div className="row">
-        <button className="iconButton" onClick={onToggle} title={open ? "Collapse" : "Expand"}>
+    <article className={`torrentItem ${open ? "open" : ""}`}>
+      <div
+        className="torrentSummary"
+        onClick={onToggle}
+        onKeyDown={(event) => handleToggleKeyDown(event, onToggle)}
+        role="button"
+        tabIndex={0}
+      >
+        <div className="disclosure" aria-hidden="true">
           {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-        </button>
-        <div className="titleCell">
-          <strong>{item.source.title || "Untitled"}</strong>
-          <span>
-            {item.source.provider}
-            {item.hash ? ` · ${shortHash(item.hash)}` : ""}
-          </span>
         </div>
-        <span className="cell sizeCell">{formatBytes(item.source.bytes)}</span>
-        <span className="cell dateCell" title={item.source.date || undefined}>
-          {formatDate(item.source.date)}
-        </span>
-        <span className="cell peerCell">
-          {item.source.seeders}/{item.source.peers}
-        </span>
+
+        <div className="torrentBody">
+          <h2>{item.title || "Untitled"}</h2>
+          <div className="metaPills">
+            <MetaPill icon={<Database size={14} />} value={item.provider || "-"} />
+            <MetaPill icon={<HardDrive size={14} />} value={formatBytes(item.bytes)} />
+            <MetaPill icon={<Users size={14} />} value={`${item.seeders}/${item.peers}`} />
+            <MetaPill icon={<Calendar size={14} />} value={formatDate(item.date)} />
+            {item.category && <MetaPill value={item.category} />}
+          </div>
+        </div>
+
         <StatusBadge status={item.status} />
-        <div className="actions">
-          {item.hash && <CopyButton value={item.hash} title="Copy hash" variant="hash" size={17} />}
+
+        <div className="torrentActions" onClick={(event) => event.stopPropagation()}>
+          {item.magnetUrl && (
+            <CopyButton value={item.magnetUrl} title="Copy MagnetLink" variant="magnet" size={17} />
+          )}
         </div>
       </div>
-      {open && <FilePanel item={item} />}
-    </>
+
+      {open && <TorrentDetails item={item} />}
+    </article>
+  );
+}
+
+function handleToggleKeyDown(event: React.KeyboardEvent<HTMLDivElement>, onToggle: () => void) {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  event.preventDefault();
+  onToggle();
+}
+
+function MetaPill({
+  icon,
+  value,
+  tone = "neutral"
+}: {
+  icon?: React.ReactNode;
+  value: string;
+  tone?: "neutral" | "strong";
+}) {
+  return (
+    <span className={`metaPill ${tone}`}>
+      {icon}
+      <span>{value}</span>
+    </span>
+  );
+}
+
+function TorrentDetails({ item }: { item: TorrentItem }) {
+  return (
+    <div className="torrentDetails">
+      <section className="detailsSection">
+        <div className="sectionHeader">
+          <h3>Torrent</h3>
+        </div>
+        <dl className="detailGrid">
+          <DetailItem label="Provider" value={item.provider || "-"} />
+          <DetailItem label="Size" value={formatBytes(item.bytes)} />
+          <DetailItem label="Date" value={formatDate(item.date)} />
+          <DetailItem label="Seeds / Peers" value={`${item.seeders}/${item.peers}`} />
+          <DetailItem label="Category" value={item.category || "-"} />
+        </dl>
+        <CodeBlock label="Info Hash" value={item.hash || ""} />
+        <CodeBlock
+          action={
+            item.magnetUrl ? (
+              <CopyButton value={item.magnetUrl} title="Copy MagnetLink" variant="magnet" size={15} />
+            ) : null
+          }
+          label="MagnetLink"
+          value={item.magnetUrl || ""}
+        />
+      </section>
+      <FilePanel item={item} />
+    </div>
+  );
+}
+
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="detailItem">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function CodeBlock({
+  label,
+  action,
+  value
+}: {
+  label: string;
+  action?: React.ReactNode;
+  value: string;
+}) {
+  return (
+    <div className="codeBlock">
+      <div className="codeHeader">
+        <span>{label}</span>
+        {action}
+      </div>
+      <pre>{value}</pre>
+    </div>
   );
 }
 
@@ -273,35 +355,49 @@ function StatusBadge({ status }: { status: TorrentStatus }) {
 
 function FilePanel({ item }: { item: TorrentItem }) {
   if (item.status === "unavailable" || item.status === "error") {
-    return <div className="panel errorText">{item.error || "Unavailable"}</div>;
+    return <div className="panel panelState errorText">{item.error || "Unavailable"}</div>;
   }
   if (item.status === "idle" || item.status === "loading") {
-    return <div className="panel muted">Metadata pending</div>;
+    return <div className="panel panelState muted">Metadata pending</div>;
   }
   if (!item.files || item.files.length === 0) {
-    return <div className="panel muted">No files</div>;
+    return <div className="panel panelState muted">No files</div>;
   }
   return (
-    <div className="panel fileList">
-      {item.files.map((file) => (
-        <div className="fileRow" key={file.path}>
-          <span className="filePath" title={file.path}>
-            {file.path}
-          </span>
-          <span>{formatBytes(file.bytes)}</span>
-          <CopyButton value={file.downloadUrl} title="Copy URL" variant="url" size={16} />
-          <a
-            className="iconButton"
-            href={file.downloadUrl}
-            rel="noreferrer"
-            target="_blank"
-            title="Download"
-          >
-            <Download size={16} />
-          </a>
-        </div>
-      ))}
-    </div>
+    <section className="assetsPanel">
+      <div className="sectionHeader">
+        <h3>Files</h3>
+        <span>{item.files.length}</span>
+      </div>
+      <div className="assetList">
+        {item.files.map((file) => (
+          <article className="assetRow" key={file.path}>
+            <div className="assetIcon" aria-hidden="true">
+              <FileText size={18} />
+            </div>
+            <div className="assetBody">
+              <div className="assetName">{file.path}</div>
+              <div className="assetMeta">
+                <span>{formatBytes(file.bytes)}</span>
+              </div>
+              <pre className="assetURL">{file.downloadUrl}</pre>
+            </div>
+            <div className="assetActions">
+              <CopyButton value={file.downloadUrl} title="Copy URL" variant="url" size={16} />
+              <a
+                className="iconButton"
+                href={file.downloadUrl}
+                rel="noreferrer"
+                target="_blank"
+                title="Download"
+              >
+                <Download size={16} />
+              </a>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -313,7 +409,7 @@ function CopyButton({
 }: {
   value: string;
   title: string;
-  variant: "hash" | "url";
+  variant: "magnet" | "url";
   size: number;
 }) {
   const [copied, setCopied] = useState(false);
@@ -340,7 +436,7 @@ function CopyButton({
     }
   }
 
-  const Icon = copied ? Check : variant === "hash" ? Hash : Link;
+  const Icon = copied ? Check : variant === "magnet" ? Magnet : Link;
 
   return (
     <button
@@ -360,10 +456,11 @@ function filterTorrents(items: TorrentItem[], filter: string): TorrentItem[] {
   }
   return items.filter((item) =>
     [
-      item.source.title,
-      item.source.provider,
+      item.title,
+      item.provider,
       item.hash ?? "",
-      item.source.category ?? ""
+      item.magnetUrl ?? "",
+      item.category ?? ""
     ].some((value) => value.toLowerCase().includes(needle))
   );
 }
@@ -464,10 +561,6 @@ function serviceErrorMessage(err: unknown): string {
     return `HTTP service error (${err.status}): ${err.message}`;
   }
   return errorMessage(err);
-}
-
-function shortHash(value: string): string {
-  return value.length > 12 ? `${value.slice(0, 12)}...` : value;
 }
 
 function formatDate(value?: string): string {
