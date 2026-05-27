@@ -6,7 +6,6 @@ import {
   Check,
   ChevronRight,
   Database,
-  Download,
   FileText,
   HardDrive,
   Network,
@@ -17,14 +16,12 @@ import {
   RadioTower,
   Search,
   Trash2,
-  X,
   Users
 } from "lucide-react";
 import "./styles.css";
 
-type TorrentStatus = "unavailable" | "idle" | "loading" | "ready" | "error";
 type FileStatus = "idle" | "downloading" | "complete";
-type DownloadTaskStatus = "downloading" | "paused" | "complete" | "canceled";
+type TorrentDownloadStatus = "idle" | "downloading" | "paused" | "complete";
 
 type FileItem = {
   path: string;
@@ -32,7 +29,6 @@ type FileItem = {
   completedBytes: number;
   savePath: string;
   status: FileStatus;
-  task?: TaskItem;
 };
 
 type TorrentItem = {
@@ -46,8 +42,8 @@ type TorrentItem = {
   peers: number;
   hash?: string;
   magnetUrl?: string;
-  status: TorrentStatus;
   downloading: boolean;
+  download: DownloadView;
   error?: string;
   files?: FileItem[];
 };
@@ -58,10 +54,8 @@ type AppState = {
   torrents: TorrentState[];
 };
 
-type TaskItem = {
-  id: string;
-  torrentId: string;
-  status: DownloadTaskStatus;
+type DownloadView = {
+  status: TorrentDownloadStatus;
   completedBytes: number;
   bytes: number;
 };
@@ -80,10 +74,8 @@ type TorrentStore = {
   items: TorrentState[];
   error: string;
   inFlightCommands: Set<string>;
-  loadMetadata: (item: TorrentState) => Promise<void>;
   loadTorrent: (id: string) => Promise<void>;
-  startDownload: (item: TorrentState, path: string) => Promise<void>;
-  runDownloadAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
+  runTorrentAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
 };
 
 type RuntimeSnapshot = {
@@ -161,8 +153,7 @@ type RuntimeTorrentEvent = {
   dhtNode?: string;
 };
 
-type DownloadAction = "pause" | "resume" | "cancel" | "delete";
-type BatchAction = "download" | DownloadAction;
+type TorrentAction = "start" | "pause" | "delete";
 
 class HTTPError extends Error {
   readonly status: number;
@@ -182,16 +173,8 @@ const pieceCellGap = 3;
 const pieceGridHeight = 260;
 const pieceGridOverscanRows = 4;
 
-const statusLabels: Record<TorrentStatus, string> = {
-  unavailable: "Unavailable",
-  idle: "Metadata pending",
-  loading: "Metadata pending",
-  ready: "Files ready",
-  error: "Metadata failed"
-};
-
 function App() {
-  const { items, error, inFlightCommands, loadMetadata, loadTorrent, startDownload, runDownloadAction } = useTorrents();
+  const { items, error, inFlightCommands, loadTorrent, runTorrentAction } = useTorrents();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("");
 
@@ -203,11 +186,7 @@ function App() {
     if (!willOpen) {
       return;
     }
-    if (item.status === "idle") {
-      void loadMetadata(item);
-    } else if (item.status !== "unavailable" && item.status !== "error") {
-      void loadTorrent(item.id);
-    }
+    void loadTorrent(item.id);
   }
 
   return (
@@ -233,8 +212,7 @@ function App() {
         items={visibleItems}
         inFlightCommands={inFlightCommands}
         expanded={expanded}
-        onDownload={startDownload}
-        onDownloadAction={runDownloadAction}
+        onTorrentAction={runTorrentAction}
         onToggle={toggle}
       />
     </main>
@@ -290,68 +268,16 @@ function useTorrents(): TorrentStore {
     setError(serviceErrorMessage(err));
   }, []);
 
-  const startDownload = useCallback(
-    async (item: TorrentItem, path: string) => {
-      const commandKey = downloadKey(item.id, path);
-      const file = (item.files ?? []).find((candidate) => candidate.path === path);
-      if (
-        inFlightCommandsRef.current.has(commandKey) ||
-        file?.status === "complete" ||
-        file?.status === "downloading" ||
-        file?.task !== undefined
-      ) {
-        return;
-      }
-      addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
-      setError("");
-      try {
-        const next = await postJSON<TorrentState>(torrentFileDownloadEndpoint(item.id), { path });
-        mergeTorrent(next);
-      } catch (err) {
-        showServiceError(err);
-      } finally {
-        clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
-      }
-    },
-    [mergeTorrent, showServiceError]
-  );
-
-  const loadMetadata = useCallback(
-    async (item: TorrentItem) => {
-      const commandKey = metadataKey(item.id);
-      if (
-        inFlightCommandsRef.current.has(commandKey) ||
-        item.status === "loading" ||
-        item.status === "ready" ||
-        item.status === "unavailable" ||
-        item.status === "error"
-      ) {
-        return;
-      }
-      addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
-      setError("");
-      try {
-        const next = await postJSON<TorrentState>(torrentMetadataEndpoint(item.id), {});
-        mergeTorrent(next);
-      } catch (err) {
-        showServiceError(err);
-      } finally {
-        clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
-      }
-    },
-    [mergeTorrent, showServiceError]
-  );
-
-  const runDownloadAction = useCallback(
-    async (task: TaskItem, action: DownloadAction) => {
-      const commandKey = taskCommandKey(task.id, action);
+  const runTorrentAction = useCallback(
+    async (item: TorrentState, action: TorrentAction) => {
+      const commandKey = torrentActionKey(item.id, action);
       if (inFlightCommandsRef.current.has(commandKey)) {
         return;
       }
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const next = await postJSON<TorrentState>(downloadActionEndpoint(task.torrentId, task.id, action), {});
+        const next = await postJSON<TorrentState>(torrentActionEndpoint(item.id, action), {});
         mergeTorrent(next);
       } catch (err) {
         showServiceError(err);
@@ -369,7 +295,7 @@ function useTorrents(): TorrentStore {
 
   useEffect(() => {
     const activeItems = Array.from(detailsByID.values()).filter(
-      (item) => item.status === "loading" || item.downloading || (item.files ?? []).some((file) => file.status === "downloading")
+      (item) => item.downloading || item.download.status === "downloading"
     );
     if (activeItems.length === 0) {
       return;
@@ -407,10 +333,8 @@ function useTorrents(): TorrentStore {
     items: state?.torrents ?? [],
     error,
     inFlightCommands,
-    loadMetadata,
     loadTorrent,
-    startDownload,
-    runDownloadAction
+    runTorrentAction
   };
 }
 
@@ -418,15 +342,13 @@ function TorrentList({
   items,
   inFlightCommands,
   expanded,
-  onDownload,
-  onDownloadAction,
+  onTorrentAction,
   onToggle
 }: {
   items: TorrentState[];
   inFlightCommands: Set<string>;
   expanded: Record<string, boolean>;
-  onDownload: (item: TorrentState, path: string) => Promise<void>;
-  onDownloadAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
+  onTorrentAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
   onToggle: (item: TorrentState) => void;
 }) {
   return (
@@ -438,8 +360,7 @@ function TorrentList({
           item={item}
           inFlightCommands={inFlightCommands}
           open={Boolean(expanded[item.id])}
-          onDownload={onDownload}
-          onDownloadAction={onDownloadAction}
+          onTorrentAction={onTorrentAction}
           onToggle={() => onToggle(item)}
         />
       ))}
@@ -451,15 +372,13 @@ const TorrentCard = React.memo(function TorrentCard({
   item,
   inFlightCommands,
   open,
-  onDownload,
-  onDownloadAction,
+  onTorrentAction,
   onToggle
 }: {
   item: TorrentState;
   inFlightCommands: Set<string>;
   open: boolean;
-  onDownload: (item: TorrentState, path: string) => Promise<void>;
-  onDownloadAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
+  onTorrentAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
   onToggle: () => void;
 }) {
   return (
@@ -486,9 +405,33 @@ const TorrentCard = React.memo(function TorrentCard({
           </div>
         </div>
 
-        <StatusBadge downloading={item.downloading} status={item.status} />
+        <DownloadStatus downloading={item.downloading} />
 
         <div className="torrentActions" onClick={(event) => event.stopPropagation()}>
+          <TorrentActionButton
+            action="start"
+            icon={<Play size={16} />}
+            inFlightCommands={inFlightCommands}
+            item={item}
+            onAction={onTorrentAction}
+            title={item.download.status === "paused" ? "Continue" : "Start"}
+          />
+          <TorrentActionButton
+            action="pause"
+            icon={<Pause size={16} />}
+            inFlightCommands={inFlightCommands}
+            item={item}
+            onAction={onTorrentAction}
+            title="Pause"
+          />
+          <TorrentActionButton
+            action="delete"
+            icon={<Trash2 size={16} />}
+            inFlightCommands={inFlightCommands}
+            item={item}
+            onAction={onTorrentAction}
+            title="Delete local data"
+          />
           {item.magnetUrl && (
             <CopyButton value={item.magnetUrl} title="Copy MagnetLink" variant="magnet" size={17} />
           )}
@@ -498,9 +441,6 @@ const TorrentCard = React.memo(function TorrentCard({
       {open && (
         <TorrentDetails
           item={item}
-          inFlightCommands={inFlightCommands}
-          onDownload={onDownload}
-          onDownloadAction={onDownloadAction}
         />
       )}
     </article>
@@ -532,29 +472,14 @@ function MetaPill({
   );
 }
 
-function TorrentDetails({
-  item,
-  inFlightCommands,
-  onDownload,
-  onDownloadAction
-}: {
-  item: TorrentState;
-  inFlightCommands: Set<string>;
-  onDownload: (item: TorrentState, path: string) => Promise<void>;
-  onDownloadAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
-}) {
+function TorrentDetails({ item }: { item: TorrentState }) {
   return (
     <div className="torrentDetails">
       <div className="detailsGrid overviewGrid">
         <TorrentInfoPanel item={item} />
         <RuntimePanel runtime={item.runtime} />
       </div>
-      <FilePanel
-        item={item}
-        inFlightCommands={inFlightCommands}
-        onDownload={onDownload}
-        onDownloadAction={onDownloadAction}
-      />
+      <FilePanel item={item} />
       <div className="detailsGrid runtimeGrid">
         <RuntimePeers runtime={item.runtime} />
         <RuntimeDHT runtime={item.runtime} />
@@ -568,7 +493,6 @@ function TorrentInfoPanel({ item }: { item: TorrentItem }) {
   return (
     <DetailBox
       icon={<Database size={16} />}
-      meta={statusLabels[item.status]}
       title="Torrent"
     >
       <div className="torrentInfoBody">
@@ -674,10 +598,10 @@ function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
   const percent = total > 0 ? (completed / total) * 100 : 0;
   const progress = summary.metadataReady
     ? `${formatPercent(percent)} (${formatBytes(completed)})`
-    : "Metadata pending";
+    : "-";
   const pieces = summary.metadataReady
     ? `${summary.piecesComplete}/${summary.numPieces}`
-    : "Metadata pending";
+    : "-";
 
   return (
     <div className="runtimeStats">
@@ -954,141 +878,78 @@ function CodeBlock({
   );
 }
 
-function StatusBadge({ downloading, status }: { downloading: boolean; status: TorrentStatus }) {
-  if (downloading) {
-    return (
-      <span className="status downloading">
-        <span className="spinner" aria-hidden="true" />
-        Downloading
-      </span>
-    );
+function DownloadStatus({ downloading }: { downloading: boolean }) {
+  if (!downloading) {
+    return null;
   }
-  const pending = status === "idle" || status === "loading";
   return (
-    <span className={`status ${status}`}>
-      {pending && <span className="spinner" aria-hidden="true" />}
-      {statusLabels[status]}
+    <span className="status downloading">
+      <span className="spinner" aria-hidden="true" />
+      Downloading
     </span>
   );
 }
 
-function FilePanel({
-  item,
+function TorrentActionButton({
+  action,
+  icon,
   inFlightCommands,
-  onDownload,
-  onDownloadAction
+  item,
+  onAction,
+  title
 }: {
-  item: TorrentState;
+  action: TorrentAction;
+  icon: React.ReactNode;
   inFlightCommands: Set<string>;
-  onDownload: (item: TorrentState, path: string) => Promise<void>;
-  onDownloadAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
+  item: TorrentState;
+  onAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
+  title: string;
 }) {
-  const files = item.files ?? [];
-  const meta = item.status === "ready" ? `${files.length}` : statusLabels[item.status];
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
-
-  useEffect(() => {
-    setSelectedPaths((current) => {
-      const available = new Set(files.map((file) => file.path));
-      let changed = false;
-      const next = new Set<string>();
-      for (const path of current) {
-        if (available.has(path)) {
-          next.add(path);
-        } else {
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [files]);
-
-  const selectedFiles = useMemo(
-    () => files.filter((file) => selectedPaths.has(file.path)),
-    [files, selectedPaths]
+  const busy = inFlightCommands.has(torrentActionKey(item.id, action));
+  const disabled = busy || !canRunTorrentAction(item, action);
+  return (
+    <button
+      className={`iconButton torrentAction ${action}`}
+      disabled={disabled}
+      onClick={() => { void onAction(item, action); }}
+      title={title}
+    >
+      {busy ? <span className="spinner" aria-hidden="true" /> : icon}
+    </button>
   );
-  const selectableFiles = files;
-  const allSelected = selectableFiles.length > 0 && selectableFiles.every((file) => selectedPaths.has(file.path));
-  const someSelected = selectedPaths.size > 0 && !allSelected;
+}
 
-  const toggleAllFiles = useCallback(() => {
-    setSelectedPaths((current) => {
-      if (selectableFiles.length > 0 && selectableFiles.every((file) => current.has(file.path))) {
-        return new Set();
-      }
-      return new Set(selectableFiles.map((file) => file.path));
-    });
-  }, [selectableFiles]);
-
-  const toggleFile = useCallback((path: string) => {
-    setSelectedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }, []);
-
-  const runBatchAction = useCallback(
-    async (action: BatchAction) => {
-      for (const file of selectedFiles) {
-        if (action === "download") {
-          if (canStartFileDownload(item, file, inFlightCommands)) {
-            await onDownload(item, file.path);
-          }
-          continue;
-        }
-        if (file.task && canRunTaskAction(file.task, action, inFlightCommands)) {
-          await onDownloadAction(file.task, action);
-        }
-      }
-    },
-    [inFlightCommands, item, onDownload, onDownloadAction, selectedFiles]
-  );
-
-  const batchAvailability = useMemo(() => ({
-    download: selectedFiles.some((file) => canStartFileDownload(item, file, inFlightCommands)),
-    pause: selectedFiles.some((file) => file.task !== undefined && canRunTaskAction(file.task, "pause", inFlightCommands)),
-    resume: selectedFiles.some((file) => file.task !== undefined && canRunTaskAction(file.task, "resume", inFlightCommands)),
-    cancel: selectedFiles.some((file) => file.task !== undefined && canRunTaskAction(file.task, "cancel", inFlightCommands)),
-    delete: selectedFiles.some((file) => file.task !== undefined && canRunTaskAction(file.task, "delete", inFlightCommands))
-  }), [inFlightCommands, item, selectedFiles]);
-
-  if (item.status === "unavailable" || item.status === "error") {
-    return (
-      <DetailBox
-        icon={<FileText size={16} />}
-        meta={meta}
-        title="Files"
-      >
-        <PanelEmpty tone="error">{item.error || "Unavailable"}</PanelEmpty>
-      </DetailBox>
-    );
+function canRunTorrentAction(item: TorrentState, action: TorrentAction): boolean {
+  if (!item.hash && !item.magnetUrl) {
+    return false;
   }
-  if (item.status === "idle" || item.status === "loading") {
+  switch (action) {
+    case "start":
+      return item.download.status !== "downloading" && item.download.status !== "complete";
+    case "pause":
+      return item.download.status === "downloading";
+    case "delete":
+      return item.download.status !== "idle" || (item.files ?? []).some((file) => file.completedBytes > 0);
+  }
+}
+
+function FilePanel({ item }: { item: TorrentState }) {
+  const files = item.files ?? [];
+  const meta = files.length > 0 ? `${files.length}` : undefined;
+
+  if (item.error) {
     return (
       <DetailBox
         icon={<FileText size={16} />}
         meta={meta}
         title="Files"
       >
-        <PanelEmpty>Metadata pending</PanelEmpty>
+        <PanelEmpty tone="error">{item.error || "No file metadata"}</PanelEmpty>
       </DetailBox>
     );
   }
   if (files.length === 0) {
-    return (
-      <DetailBox
-        icon={<FileText size={16} />}
-        meta={meta}
-        title="Files"
-      >
-        <PanelEmpty>No files</PanelEmpty>
-      </DetailBox>
-    );
+    return null;
   }
   return (
     <DetailBox
@@ -1097,201 +958,40 @@ function FilePanel({
       meta={meta}
       title="Files"
     >
-      <div className="fileToolbar">
-        <label className="selectControl" title={allSelected ? "Clear selection" : "Select files"}>
-          <input
-            checked={allSelected}
-            onChange={toggleAllFiles}
-            ref={(input) => {
-              if (input) {
-                input.indeterminate = someSelected;
-              }
-            }}
-            type="checkbox"
-          />
-        </label>
-        <span className="selectionMeta">{selectedPaths.size > 0 ? `${selectedPaths.size} selected` : `${files.length} files`}</span>
-        {selectedPaths.size > 0 && (
-          <div className="bulkActions">
-            <button className="iconButton" disabled={!batchAvailability.download} onClick={() => { void runBatchAction("download"); }} title="Download selected">
-              <Download size={16} />
-            </button>
-            <button className="iconButton" disabled={!batchAvailability.pause} onClick={() => { void runBatchAction("pause"); }} title="Pause selected">
-              <Pause size={16} />
-            </button>
-            <button className="iconButton" disabled={!batchAvailability.resume} onClick={() => { void runBatchAction("resume"); }} title="Resume selected">
-              <Play size={16} />
-            </button>
-            <button className="iconButton" disabled={!batchAvailability.cancel} onClick={() => { void runBatchAction("cancel"); }} title="Cancel selected">
-              <X size={16} />
-            </button>
-            <button className="iconButton" disabled={!batchAvailability.delete} onClick={() => { void runBatchAction("delete"); }} title="Delete selected files">
-              <Trash2 size={16} />
-            </button>
-          </div>
-        )}
-      </div>
       <div className="assetList">
-        {files.map((file) => {
-          const task = file.task;
-          const busy = isFileDownloadBusy(item, file, inFlightCommands);
-          const disabled = busy || file.status === "complete" || task !== undefined;
-          const selected = selectedPaths.has(file.path);
-          return (
-            <article className={`assetRow ${selected ? "selected" : ""}`} key={file.path}>
-              <div className="assetSelect">
-                <label className="selectControl" title={selected ? "Deselect file" : "Select file"}>
-                  <input
-                    checked={selected}
-                    onChange={() => toggleFile(file.path)}
-                    type="checkbox"
-                  />
-                </label>
-              </div>
+        {files.map((file) => (
+            <article className="assetRow" key={file.path}>
               <div className="assetBody">
                 <div className="assetName">{file.path}</div>
                 <div className="assetMeta">
                   <span>{formatBytes(file.bytes)}</span>
                   <span>{fileProgressLabel(file)}</span>
-                  <FileStatePill file={file} task={task} />
+                  <FileStatePill file={file} />
                 </div>
                 <pre className="assetPath">{file.savePath}</pre>
               </div>
               <div className="assetActions">
                 <CopyButton value={file.savePath} title="Copy path" variant="url" size={16} />
-                {task ? (
-                  <DownloadTaskActions
-                    task={task}
-                    inFlightCommands={inFlightCommands}
-                    onAction={onDownloadAction}
-                  />
-                ) : (
-                  <button
-                    className="iconButton"
-                    disabled={disabled}
-                    onClick={() => { void onDownload(item, file.path); }}
-                    title={file.status === "complete" ? "Downloaded" : busy ? "Downloading" : "Download"}
-                  >
-                    {downloadButtonIcon(file.status === "complete", busy)}
-                  </button>
-                )}
               </div>
             </article>
-          );
-        })}
+        ))}
       </div>
     </DetailBox>
   );
-}
-
-function downloadButtonIcon(complete: boolean, busy: boolean): React.ReactNode {
-  if (complete) {
-    return <Check size={16} />;
-  }
-  if (busy) {
-    return <span className="spinner" aria-hidden="true" />;
-  }
-  return <Download size={16} />;
-}
-
-function canStartFileDownload(item: TorrentItem, file: FileItem, inFlightCommands: Set<string>): boolean {
-  return !isFileDownloadBusy(item, file, inFlightCommands) &&
-    file.status !== "complete" &&
-    file.task === undefined;
-}
-
-function isFileDownloadBusy(item: TorrentItem, file: FileItem, inFlightCommands: Set<string>): boolean {
-  return inFlightCommands.has(downloadKey(item.id, file.path)) || file.status === "downloading";
-}
-
-function canRunTaskAction(task: TaskItem, action: DownloadAction, inFlightCommands: Set<string>): boolean {
-  if (inFlightCommands.has(taskCommandKey(task.id, action))) {
-    return false;
-  }
-  switch (action) {
-    case "pause":
-    case "cancel":
-      return task.status === "downloading";
-    case "resume":
-      return task.status === "paused" || task.status === "canceled";
-    case "delete":
-      return task.status !== "downloading";
-  }
 }
 
 function fileProgressLabel(file: FileItem): string {
   if (file.bytes <= 0) {
     return "-";
   }
-  const completed = file.task?.completedBytes ?? file.completedBytes;
+  const completed = file.completedBytes;
   return `${formatPercent((completed / file.bytes) * 100)} (${formatBytes(completed)})`;
 }
 
-function FileStatePill({ file, task }: { file: FileItem; task?: TaskItem }) {
-  if (task?.status === "paused") return <span className="statePill paused">Paused</span>;
-  if (task?.status === "canceled") return <span className="statePill canceled">Canceled</span>;
+function FileStatePill({ file }: { file: FileItem }) {
   if (file.status === "downloading") return <span className="statePill downloading">Downloading</span>;
   if (file.status === "complete") return <span className="statePill complete">Complete</span>;
   return null;
-}
-
-function DownloadTaskActions({
-  task,
-  inFlightCommands,
-  onAction
-}: {
-  task: TaskItem;
-  inFlightCommands: Set<string>;
-  onAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
-}) {
-  const busy = (action: DownloadAction) => inFlightCommands.has(taskCommandKey(task.id, action));
-  if (task.status === "downloading") {
-    return (
-      <>
-        <TaskActionButton action="pause" busy={busy("pause")} task={task} icon={<Pause size={16} />} onAction={onAction} title="Pause" />
-        <TaskActionButton action="cancel" busy={busy("cancel")} task={task} icon={<X size={16} />} onAction={onAction} title="Cancel" />
-      </>
-    );
-  }
-  if (task.status === "paused" || task.status === "canceled") {
-    return (
-      <>
-        <TaskActionButton action="resume" busy={busy("resume")} task={task} icon={<Play size={16} />} onAction={onAction} title="Resume" />
-        <TaskActionButton action="delete" busy={busy("delete")} task={task} icon={<Trash2 size={16} />} onAction={onAction} title="Delete file" />
-      </>
-    );
-  }
-  return (
-    <TaskActionButton action="delete" busy={busy("delete")} task={task} icon={<Trash2 size={16} />} onAction={onAction} title="Delete file" />
-  );
-}
-
-function TaskActionButton({
-  action,
-  busy,
-  task,
-  icon,
-  onAction,
-  title
-}: {
-  action: DownloadAction;
-  busy: boolean;
-  task: TaskItem;
-  icon: React.ReactNode;
-  onAction: (task: TaskItem, action: DownloadAction) => Promise<void>;
-  title: string;
-}) {
-  const disabled = busy || !canRunTaskAction(task, action, new Set());
-  return (
-    <button
-      className="iconButton"
-      disabled={disabled}
-      onClick={() => { void onAction(task, action); }}
-      title={title}
-    >
-      {busy ? <span className="spinner" aria-hidden="true" /> : icon}
-    </button>
-  );
 }
 
 function CopyButton({
@@ -1359,27 +1059,10 @@ function filterTorrents(items: TorrentState[], filter: string): TorrentState[] {
 }
 
 function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): TorrentState {
-  if (!detailItem) {
-    return listItem;
-  }
-  if (detailItem.status === "ready" && (detailItem.files ?? []).length > 0) {
-    return detailItem;
-  }
-  if (listItem.status !== detailItem.status || listItem.downloading !== detailItem.downloading) {
-    return listItem;
-  }
-  return detailItem;
+  return detailItem && detailItem.downloading === listItem.downloading ? detailItem : listItem;
 }
 
-function downloadKey(id: string, path = ""): string {
-  return `${id}\0${path}`;
-}
-
-function metadataKey(id: string): string {
-  return `${id}\0metadata`;
-}
-
-function taskCommandKey(id: string, action: DownloadAction): string {
+function torrentActionKey(id: string, action: TorrentAction): string {
   return `${id}\0${action}`;
 }
 
@@ -1416,20 +1099,12 @@ function torrentEndpoint(id: string): string {
   return `/api/torrents/${encodeURIComponent(id)}`;
 }
 
-function torrentMetadataEndpoint(id: string): string {
-  return `${torrentEndpoint(id)}/metadata`;
-}
-
-function torrentFileDownloadEndpoint(id: string): string {
-  return `${torrentEndpoint(id)}/files/download`;
-}
-
 function torrentStreamEndpoint(id: string): string {
   return `${torrentEndpoint(id)}/stream`;
 }
 
-function downloadActionEndpoint(torrentID: string, taskID: string, action: DownloadAction): string {
-  return `${torrentEndpoint(torrentID)}/downloads/${encodeURIComponent(taskID)}/${action}`;
+function torrentActionEndpoint(id: string, action: TorrentAction): string {
+  return `${torrentEndpoint(id)}/${action}`;
 }
 
 async function getJSON<T>(url: string): Promise<T> {

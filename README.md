@@ -106,11 +106,8 @@ directly through BitTorrent into `--save-to`.
 The UI shows:
 
 - Torrent summary, provider, size, seeds, peers, info hash, and magnet link.
-- Files from loaded torrent metadata.
-- File-level `Download` buttons that download directly through BitTorrent.
-- Gmail-style file selection for applying download task actions to selected files.
-- Download task actions for pausing, resuming, canceling, and deleting the
-  task's saved file.
+- Torrent-level `Start`, `Pause`, and `Delete` actions.
+- Files from loaded torrent metadata as a read-only view of torrent contents.
 - Runtime diagnostics: Peers, DHT, Events, and Pieces.
 - A virtualized piece grid where one box is one real BitTorrent piece from the
   torrent-level anacrolix state.
@@ -124,18 +121,15 @@ get API:
 GET /api/torrents
 GET /api/torrents/{id}
 GET /api/torrents/{id}/stream
-POST /api/torrents/{id}/metadata
-POST /api/torrents/{id}/files/download
-POST /api/torrents/{id}/downloads/{downloadID}/pause
-POST /api/torrents/{id}/downloads/{downloadID}/resume
-POST /api/torrents/{id}/downloads/{downloadID}/cancel
-POST /api/torrents/{id}/downloads/{downloadID}/delete
+POST /api/torrents/{id}/start
+POST /api/torrents/{id}/pause
+POST /api/torrents/{id}/delete
 ```
 
 `/api/torrents` is a cheap list endpoint and does not add torrents to the
-BitTorrent runtime. Metadata loading, runtime diagnostics, file state, and
-download task actions belong to `/api/torrents/{id}`. The per-torrent SSE stream
-pushes live updates only for active torrents.
+BitTorrent runtime. Torrent download actions load metadata when needed through
+anacrolix/torrent. The per-torrent SSE stream pushes live updates only for
+active torrents.
 
 ## Configuration
 

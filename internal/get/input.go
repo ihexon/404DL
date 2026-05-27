@@ -93,7 +93,6 @@ func torrentItemFromResult(index int, result model.Torrent, encryptor *crypto.St
 		Date:     result.Date,
 		Seeders:  result.Seeders,
 		Peers:    result.Peers,
-		Status:   TorrentStatusIdle,
 	}
 
 	magnetURL, encryptedMagnet, magnetErr := resolveMagnet(result.MagnetURL, encryptor)
@@ -128,7 +127,6 @@ func torrentItemFromResult(index int, result model.Torrent, encryptor *crypto.St
 		return item
 	}
 
-	item.Status = TorrentStatusUnavailable
 	stats.unavailable++
 	if magnetErr != nil {
 		item.Error = magnetErr.Error()
