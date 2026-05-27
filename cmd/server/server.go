@@ -18,15 +18,20 @@ func runServer(c *cli.Context) error {
 		return err
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"listen":            cfg.Addr,
+		"page_size":         cfg.PageSize,
+		"upstream_timeout":  cfg.HTTPClient.Timeout.String(),
+		"magnet_encryption": cfg.MagnetEncryptor != nil,
+	}).Info("server configured")
+
 	handler, err := newSearchHandler(cfg)
 	if err != nil {
 		return err
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"listen":   cfg.Addr,
-		"pageSize": cfg.PageSize,
-		"timeout":  cfg.HTTPClient.Timeout.String(),
+		"listen": cfg.Addr,
 	}).Info("server listening")
 
 	if err := http.ListenAndServe(cfg.Addr, handler.Routes()); err != nil {
@@ -70,6 +75,7 @@ func newMagnetEncryptor() (server.StringEncryptor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid magnetUrl encryption key: %w", err)
 	}
+	logrus.WithField("key_length", len(key)).Info("magnetUrl encryption enabled")
 	return encryptor, nil
 }
 

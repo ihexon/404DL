@@ -8,9 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 
+	"mvdl/internal/logging"
 	"mvdl/internal/model"
 )
 
@@ -34,19 +36,26 @@ func NewAggregator(providers ...Provider) *Aggregator {
 
 func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Torrent, error) {
 	if len(a.providers) == 0 {
+		logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
+			"query": req.Query,
+			"limit": req.Limit,
+		})).Error("provider aggregation failed: no providers configured")
 		return nil, errors.New("no providers configured")
 	}
 
-	log.WithFields(log.Fields{
-		"query":     req.Query,
-		"limit":     req.Limit,
-		"providers": len(a.providers),
-	}).Info("provider aggregation started")
+	startedAt := time.Now()
+	logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
+		"query":          req.Query,
+		"limit":          req.Limit,
+		"providers":      len(a.providers),
+		"provider_names": providerNames(a.providers),
+	})).Info("provider aggregation started")
 
 	type result struct {
-		provider string
-		torrents []model.Torrent
-		err      error
+		provider   string
+		torrents   []model.Torrent
+		err        error
+		durationMS int64
 	}
 
 	results := make(chan result, len(a.providers))
@@ -55,21 +64,24 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 		wg.Add(1)
 		go func(p Provider) {
 			defer wg.Done()
-			log.WithFields(log.Fields{
+			providerStartedAt := time.Now()
+			providerFields := logging.MergeFields(ctx, logrus.Fields{
 				"provider": p.Name(),
 				"query":    req.Query,
 				"limit":    req.Limit,
-			}).Info("provider search started")
+			})
+			logrus.WithFields(providerFields).Info("provider search started")
+
 			torrents, err := p.Search(ctx, req)
+			durationMS := logging.DurationMillis(time.Since(providerStartedAt))
 			if err != nil {
-				results <- result{provider: p.Name(), err: fmt.Errorf("%s: %w", p.Name(), err)}
+				results <- result{provider: p.Name(), err: fmt.Errorf("%s: %w", p.Name(), err), durationMS: durationMS}
 				return
 			}
-			log.WithFields(log.Fields{
-				"provider": p.Name(),
-				"count":    len(torrents),
-			}).Info("provider search completed")
-			results <- result{provider: p.Name(), torrents: torrents}
+			providerFields["result_count"] = len(torrents)
+			providerFields["duration_ms"] = durationMS
+			logrus.WithFields(providerFields).Info("provider search completed")
+			results <- result{provider: p.Name(), torrents: torrents, durationMS: durationMS}
 		}(p)
 	}
 
@@ -85,8 +97,12 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	for res := range results {
 		if res.err != nil {
 			fields := ErrorFields(res.err)
+			for key, value := range logging.ContextFields(ctx) {
+				fields[key] = value
+			}
 			fields["provider"] = res.provider
-			log.WithFields(fields).Warn("provider search failed")
+			fields["duration_ms"] = res.durationMS
+			logrus.WithFields(fields).Warn("provider search failed")
 			errs = append(errs, res.err)
 			failedProviders = append(failedProviders, res.provider)
 			continue
@@ -96,28 +112,51 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	}
 
 	if len(merged) == 0 && len(errs) > 0 {
+		logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
+			"query":         req.Query,
+			"limit":         req.Limit,
+			"errors":        len(errs),
+			"providers_err": failedProviders,
+			"duration_ms":   logging.DurationMillis(time.Since(startedAt)),
+		})).Error("provider aggregation failed: all providers failed")
 		return nil, errors.Join(errs...)
 	}
 
+	rawCount := len(merged)
 	merged = dedupe(merged)
 	afterDedupe := len(merged)
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].Seeders > merged[j].Seeders
 	})
+	limited := false
 	if req.Limit > 0 && len(merged) > req.Limit {
 		merged = merged[:req.Limit]
+		limited = true
 	}
 	merged = append([]model.Torrent(nil), merged...)
 
-	log.WithFields(log.Fields{
-		"query":         req.Query,
-		"after_dedupe":  afterDedupe,
-		"returned":      len(merged),
-		"errors":        len(errs),
-		"providers_ok":  okProviders,
-		"providers_err": failedProviders,
-	}).Info("provider aggregation completed")
+	logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
+		"query":              req.Query,
+		"limit":              req.Limit,
+		"raw_results":        rawCount,
+		"deduped_results":    afterDedupe,
+		"duplicates_removed": rawCount - afterDedupe,
+		"returned":           len(merged),
+		"limit_applied":      limited,
+		"errors":             len(errs),
+		"providers_ok":       okProviders,
+		"providers_err":      failedProviders,
+		"duration_ms":        logging.DurationMillis(time.Since(startedAt)),
+	})).Info("provider aggregation completed")
 	return merged, nil
+}
+
+func providerNames(providers []Provider) []string {
+	names := make([]string, 0, len(providers))
+	for _, p := range providers {
+		names = append(names, p.Name())
+	}
+	return names
 }
 
 func dedupe(torrents []model.Torrent) []model.Torrent {

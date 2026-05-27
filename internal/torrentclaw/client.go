@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 
+	"mvdl/internal/logging"
 	"mvdl/internal/magnet"
 	"mvdl/internal/model"
 	"mvdl/internal/provider"
@@ -78,37 +80,42 @@ type torrentInfo struct {
 }
 
 func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
-	log.WithFields(log.Fields{
+	fields := logging.MergeFields(ctx, logrus.Fields{
 		"provider": c.Name(),
 		"query":    req.Query,
 		"sort":     "seeders",
 		"auth":     c.apiKey != "",
-	}).Info("torrentclaw api request prepared")
+		"api_url":  c.apiURL,
+	})
+	logrus.WithFields(fields).Info("torrentclaw api request prepared")
+
+	startedAt := time.Now()
 	resp, err := c.searchPage(ctx, req.Query)
 	if err != nil {
 		return nil, err
 	}
-	c.logAuthNotice(resp)
+	c.logAuthNotice(ctx, resp)
 
 	out := c.flatten(resp)
-	log.WithFields(log.Fields{
-		"provider": c.Name(),
-		"contents": len(resp.Results),
-		"torrents": len(out),
-		"notice":   resp.Notice,
-	}).Info("torrentclaw api response decoded")
+	fields["contents"] = len(resp.Results)
+	fields["torrents"] = len(out)
+	fields["notice"] = logging.Truncate(resp.Notice, 200)
+	fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+	fields["with_hash"] = countHashes(out)
+	fields["with_magnet"] = countMagnets(out)
+	logrus.WithFields(fields).Info("torrentclaw api response decoded")
 	return out, nil
 }
 
-func (c *Client) logAuthNotice(resp searchResponse) {
+func (c *Client) logAuthNotice(ctx context.Context, resp searchResponse) {
 	if c.apiKey == "" || strings.TrimSpace(resp.Notice) == "" {
 		return
 	}
 
-	log.WithFields(log.Fields{
+	logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
 		"provider": c.Name(),
-		"notice":   resp.Notice,
-	}).Warn("torrentclaw api key may not be accepted")
+		"notice":   logging.Truncate(resp.Notice, 200),
+	})).Warn("torrentclaw api key may not be accepted")
 }
 
 func (c *Client) searchPage(ctx context.Context, query string) (searchResponse, error) {
@@ -137,6 +144,12 @@ func (c *Client) searchPage(ctx context.Context, query string) (searchResponse, 
 		return searchResponse{}, provider.NewRequestError(c.Name(), httpReq, err)
 	}
 	defer resp.Body.Close()
+	logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
+		"provider":    c.Name(),
+		"http_method": httpReq.Method,
+		"http_url":    httpReq.URL.String(),
+		"http_status": resp.StatusCode,
+	})).Info("torrentclaw api response received")
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -185,4 +198,24 @@ func stringPtr(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func countHashes(torrents []model.Torrent) int {
+	count := 0
+	for _, torrent := range torrents {
+		if torrent.Hash != nil && strings.TrimSpace(*torrent.Hash) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func countMagnets(torrents []model.Torrent) int {
+	count := 0
+	for _, torrent := range torrents {
+		if torrent.MagnetURL != nil && strings.TrimSpace(*torrent.MagnetURL) != "" {
+			count++
+		}
+	}
+	return count
 }
