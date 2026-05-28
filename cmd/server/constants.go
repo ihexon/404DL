@@ -16,9 +16,9 @@ const (
 	FlagSaveTo        = "save-to"
 	FlagTorrentListen = "torrent-listen"
 
-	DefaultListenAddr        = "127.0.0.1:6567"
+	DefaultListenAddr        = "127.0.0.1:0"
 	DefaultGetAddr           = "127.0.0.1:0"
-	DefaultTorrentListenAddr = ":42069"
+	DefaultTorrentListenAddr = ":0"
 
 	SubCmdGet    = "get"
 	SubCmdSearch = "search"
