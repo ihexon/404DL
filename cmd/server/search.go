@@ -19,7 +19,7 @@ func runSearch(c *cli.Context) error {
 	startedAt := time.Now()
 	searchQuery := c.Args().First()
 	if searchQuery == "" {
-		return fmt.Errorf("search query is required")
+		return fmt.Errorf("query is required")
 	}
 
 	client := &http.Client{Timeout: c.Duration(FlagTimeout)}
@@ -35,14 +35,14 @@ func runSearch(c *cli.Context) error {
 		"request_id": requestID,
 		"query":      searchQuery,
 		"providers":  providerNames,
-		"limit":      c.Int(FlagPageSize),
+		"limit":      c.Int(FlagLimitSize),
 		"timeout":    client.Timeout.String(),
 	}).Info("search request started")
 
 	ctx := logging.WithRequestID(c.Context, requestID)
 	results, err := searcher.Search(ctx, provider.SearchRequest{
 		Query: searchQuery,
-		Limit: c.Int(FlagPageSize),
+		Limit: c.Int(FlagLimitSize),
 	})
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
