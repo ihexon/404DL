@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"io"
 )
 
 type StringEncryptor struct {
@@ -33,7 +32,7 @@ func NewStringEncryptor(key string) (*StringEncryptor, error) {
 
 func (e *StringEncryptor) EncryptString(plaintext string) (string, error) {
 	nonce := make([]byte, e.gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+	if _, err := rand.Read(nonce); err != nil {
 		return "", fmt.Errorf("generate nonce: %w", err)
 	}
 

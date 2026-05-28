@@ -72,6 +72,38 @@ h1 {
   color: #1f2328;
 }
 
+.filterTabs {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.filterTab {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #57606a;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.filterTab:hover {
+  color: #24292f;
+  background: #f6f8fa;
+}
+
+.filterTab.active {
+  color: #0969da;
+  background: #ddf4ff;
+}
+
 .banner {
   margin-bottom: 12px;
   padding: 10px 12px;
@@ -266,6 +298,12 @@ h1 {
   border-color: #9ec5fe;
   background: #ddf4ff;
   color: #0969da;
+}
+
+.status.complete {
+  border-color: #a6e3b7;
+  background: #dafbe1;
+  color: #1a7f37;
 }
 
 .spinner {
@@ -668,6 +706,14 @@ h1 {
 
   .searchBox {
     min-width: 0;
+  }
+
+  .filterTabs {
+    width: 100%;
+  }
+
+  .filterTab {
+    flex: 1 1 0;
   }
 
   .torrentSummary {

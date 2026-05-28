@@ -48,8 +48,14 @@ type torrentDownload struct {
 	Active         bool
 	CompletedBytes int64
 	Bytes          int64
+	torrent        *torrent.Torrent
 	ctx            context.Context
 	cancel         context.CancelFunc
+}
+
+type torrentRuntime struct {
+	t      *torrent.Torrent
+	active bool
 }
 
 func NewManager(items []TorrentItem, saveTo, torrentListenAddr string) (*Manager, error) {
@@ -235,7 +241,7 @@ func (m *Manager) runtimeView(id string) RuntimeView {
 }
 
 func (m *Manager) refreshLoadedItem(item TorrentItem) TorrentItem {
-	t, ok, err := m.LoadedTorrent(item.ID)
+	t, ok, err := m.torrentRuntime(item.ID)
 	if ok && err == nil && t != nil && t.Info() != nil {
 		return m.refreshFiles(item.ID, t)
 	}
@@ -262,7 +268,7 @@ func (m *Manager) LoadedTorrent(id string) (*torrent.Torrent, bool, error) {
 }
 
 func (m *Manager) RuntimeSnapshotIfLoaded(id string) (*RuntimeSnapshot, bool, error) {
-	t, ok, err := m.LoadedTorrent(id)
+	t, ok, err := m.torrentRuntime(id)
 	if !ok || err != nil {
 		return nil, ok, err
 	}
@@ -271,30 +277,6 @@ func (m *Manager) RuntimeSnapshotIfLoaded(id string) (*RuntimeSnapshot, bool, er
 	}
 	snapshot := m.runtime.snapshot(id, m.client, t)
 	return &snapshot, true, nil
-}
-
-func (m *Manager) RuntimeSnapshot(id string) (RuntimeSnapshot, bool, error) {
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		return RuntimeSnapshot{}, true, errManagerClosed
-	}
-	item, ok := m.items[id]
-	if !ok {
-		m.mu.Unlock()
-		return RuntimeSnapshot{}, false, nil
-	}
-	m.wg.Add(1)
-	hash := item.Hash
-	magnetURL := item.MagnetURL
-	m.mu.Unlock()
-	defer m.wg.Done()
-
-	t, err := m.addTorrent(hash, magnetURL)
-	if err != nil {
-		return RuntimeSnapshot{}, true, err
-	}
-	return m.runtime.snapshot(id, m.client, t), true, nil
 }
 
 func (m *Manager) FileTorrent(ctx context.Context, id string) (*torrent.Torrent, bool, error) {
@@ -390,6 +372,7 @@ func (m *Manager) startTorrentDownload(id string, t *torrent.Torrent) {
 		Active:         true,
 		CompletedBytes: t.BytesCompleted(),
 		Bytes:          t.Length(),
+		torrent:        t,
 		ctx:            ctx,
 		cancel:         cancel,
 	}
@@ -401,10 +384,19 @@ func (m *Manager) startTorrentDownload(id string, t *torrent.Torrent) {
 }
 
 func (m *Manager) PauseDownload(ctx context.Context, id string) (TorrentItem, bool, error) {
-	t, ok, err := m.FileTorrent(ctx, id)
+	runtime, ok, err := m.downloadRuntime(id)
 	if !ok || err != nil {
 		return TorrentItem{}, ok, err
 	}
+	if runtime.t == nil || !runtime.active {
+		item, ok := m.Get(id)
+		if !ok {
+			return TorrentItem{}, false, nil
+		}
+		return item, true, nil
+	}
+
+	t := runtime.t
 	t.CancelPieces(0, int(t.NumPieces()))
 	t.DisallowDataDownload()
 	m.mu.Lock()
@@ -416,6 +408,7 @@ func (m *Manager) PauseDownload(ctx context.Context, id string) (TorrentItem, bo
 		current.Active = false
 		current.CompletedBytes = t.BytesCompleted()
 		current.Bytes = t.Length()
+		current.torrent = t
 		current.ctx = nil
 		current.cancel = nil
 	}
@@ -424,24 +417,27 @@ func (m *Manager) PauseDownload(ctx context.Context, id string) (TorrentItem, bo
 }
 
 func (m *Manager) DeleteDownload(ctx context.Context, id string) (TorrentItem, bool, error) {
-	t, ok, err := m.FileTorrent(ctx, id)
+	runtime, ok, err := m.deleteRuntime(id)
 	if !ok || err != nil {
 		return TorrentItem{}, ok, err
 	}
-	t.CancelPieces(0, int(t.NumPieces()))
-	t.DisallowDataDownload()
-	m.mu.Lock()
-	if current, ok := m.downloads[id]; ok {
-		if current.cancel != nil {
-			current.cancel()
+	t := runtime.t
+	var deleteErr error
+	if t != nil {
+		t.CancelPieces(0, int(t.NumPieces()))
+		t.DisallowDataDownload()
+		if t.Info() != nil {
+			deleteErr = m.deleteTorrentFiles(t)
+		} else {
+			deleteErr = m.deleteItemFiles(id)
 		}
-		delete(m.downloads, id)
+		t.Drop()
+	} else {
+		deleteErr = m.deleteItemFiles(id)
 	}
-	m.mu.Unlock()
-	if err := m.deleteTorrentFiles(t); err != nil {
-		return TorrentItem{}, true, err
+	if deleteErr != nil {
+		return TorrentItem{}, true, deleteErr
 	}
-	t.Drop()
 	return m.clearDownloadedTorrent(id), true, nil
 }
 
@@ -461,9 +457,19 @@ func (m *Manager) monitorTorrentDownload(ctx context.Context, id string, t *torr
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				m.updateDownloadProgress(id, t)
 			}
 		}
 	}()
+}
+
+func (m *Manager) updateDownloadProgress(id string, t *torrent.Torrent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if dl, ok := m.downloads[id]; ok && dl.Active {
+		dl.CompletedBytes = t.BytesCompleted()
+		dl.Bytes = t.Length()
+	}
 }
 
 func (m *Manager) finishTorrentDownload(id string, t *torrent.Torrent) {
@@ -475,6 +481,7 @@ func (m *Manager) finishTorrentDownload(id string, t *torrent.Torrent) {
 		current.Active = false
 		current.CompletedBytes = t.BytesCompleted()
 		current.Bytes = t.Length()
+		current.torrent = nil
 		current.ctx = nil
 		current.cancel = nil
 	}
@@ -486,14 +493,21 @@ func (m *Manager) finishTorrentDownload(id string, t *torrent.Torrent) {
 	}
 }
 
-func removeSavedPaths(root string, filePaths ...string) error {
-	for _, filePath := range filePaths {
-		fullPath, err := savedPath(root, filePath)
-		if err != nil {
+func (m *Manager) deleteItemFiles(id string) error {
+	m.mu.Lock()
+	item, ok := m.items[id]
+	if !ok || len(item.Files) == 0 {
+		m.mu.Unlock()
+		return nil
+	}
+	paths := make([]string, 0, len(item.Files)*2)
+	for _, file := range item.Files {
+		paths = append(paths, file.SavePath, file.SavePath+".part")
+	}
+	m.mu.Unlock()
+	for _, path := range paths {
+		if err := removeSavedPath(m.saveTo, path); err != nil {
 			return err
-		}
-		if err := os.Remove(fullPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("delete saved file %q: %w", filePath, err)
 		}
 	}
 	return nil
@@ -504,26 +518,51 @@ func (m *Manager) deleteTorrentFiles(t *torrent.Torrent) error {
 	for _, file := range t.Files() {
 		paths = append(paths, file.Path(), file.Path()+".part")
 	}
-	if len(paths) == 0 {
-		return nil
+	for _, path := range paths {
+		if err := removeSavedPath(m.saveTo, path); err != nil {
+			return err
+		}
 	}
-	return removeSavedPaths(m.saveTo, paths...)
+	return nil
+}
+
+func removeSavedPath(root, path string) error {
+	fullPath, err := savedPath(root, path)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(fullPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("delete saved file %q: %w", fullPath, err)
+	}
+	return nil
+}
+
+func savedPath(root, path string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve save directory %q: %w", root, err)
+	}
+	root = filepath.Clean(root)
+	path = filepath.Clean(filepath.FromSlash(path))
+
+	fullPath := path
+	if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(root, path)
+	}
+	fullPath = filepath.Clean(fullPath)
+
+	rel, err := filepath.Rel(root, fullPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve saved path %q: %w", path, err)
+	}
+	if rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("refuse to delete outside save directory: %q", fullPath)
+	}
+	return fullPath, nil
 }
 
 func torrentDownloadComplete(t *torrent.Torrent) bool {
 	return t.Length() == 0 || t.BytesCompleted() >= t.Length()
-}
-
-func savedPath(root, filePath string) (string, error) {
-	fullPath := filepath.Join(root, filepath.FromSlash(filePath))
-	rel, err := filepath.Rel(root, fullPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve saved path: %w", err)
-	}
-	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("refuse to delete outside save directory")
-	}
-	return fullPath, nil
 }
 
 func (m *Manager) refreshFiles(id string, t *torrent.Torrent) TorrentItem {
@@ -606,6 +645,56 @@ func (m *Manager) addTorrent(hash, magnetURL string) (*torrent.Torrent, error) {
 	return t, nil
 }
 
+func (m *Manager) torrentRuntime(id string) (*torrent.Torrent, bool, error) {
+	m.mu.Lock()
+	if _, ok := m.items[id]; !ok {
+		m.mu.Unlock()
+		return nil, false, nil
+	} else if download, ok := m.downloads[id]; ok && download.torrent != nil {
+		t := download.torrent
+		m.mu.Unlock()
+		return t, true, nil
+	}
+	m.mu.Unlock()
+	return m.LoadedTorrent(id)
+}
+
+func (m *Manager) downloadRuntime(id string) (torrentRuntime, bool, error) {
+	m.mu.Lock()
+	if _, ok := m.items[id]; !ok {
+		m.mu.Unlock()
+		return torrentRuntime{}, false, nil
+	}
+	if download, ok := m.downloads[id]; ok {
+		out := torrentRuntime{t: download.torrent, active: download.Active}
+		m.mu.Unlock()
+		return out, true, nil
+	}
+	m.mu.Unlock()
+	t, ok, err := m.LoadedTorrent(id)
+	return torrentRuntime{t: t}, ok, err
+}
+
+func (m *Manager) deleteRuntime(id string) (torrentRuntime, bool, error) {
+	m.mu.Lock()
+	if _, ok := m.items[id]; !ok {
+		m.mu.Unlock()
+		return torrentRuntime{}, false, nil
+	}
+	if download, ok := m.downloads[id]; ok {
+		out := torrentRuntime{t: download.torrent, active: download.Active}
+		if download.cancel != nil {
+			download.cancel()
+		}
+		delete(m.downloads, id)
+		m.mu.Unlock()
+		return out, true, nil
+	}
+	m.mu.Unlock()
+	t, ok, err := m.LoadedTorrent(id)
+	return torrentRuntime{t: t}, ok, err
+}
+
 func (m *Manager) cloneItemLocked(item *TorrentItem) TorrentItem {
 	out := *item
 	out.Downloading = m.torrentDownloadingLocked(item.ID)
@@ -628,42 +717,25 @@ func (m *Manager) torrentDownloading(id string) bool {
 }
 
 func (m *Manager) downloadViewLocked(id string, t *torrent.Torrent) DownloadView {
-	bytes := int64(0)
-	completed := int64(0)
-	if t != nil && t.Info() != nil {
-		bytes = t.Length()
-		completed = t.BytesCompleted()
-	} else if item, ok := m.items[id]; ok {
-		bytes = item.Bytes
-	}
 	if download, ok := m.downloads[id]; ok {
+		completed := download.CompletedBytes
+		bytes := download.Bytes
+		if t != nil && t.Info() != nil {
+			completed = t.BytesCompleted()
+			bytes = t.Length()
+		}
 		return DownloadView{
 			Status:         download.Status,
-			CompletedBytes: maxInt64(completed, download.CompletedBytes),
-			Bytes:          maxInt64(bytes, download.Bytes),
+			CompletedBytes: completed,
+			Bytes:          bytes,
 		}
 	}
-	status := TorrentDownloadStatusIdle
-	if item, ok := m.items[id]; ok {
-		if item.Download.Status != "" {
-			status = item.Download.Status
-		}
-		completed = maxInt64(completed, item.Download.CompletedBytes)
-		bytes = maxInt64(bytes, item.Download.Bytes)
+	item, ok := m.items[id]
+	if !ok {
+		return DownloadView{Status: TorrentDownloadStatusIdle}
 	}
-	if bytes > 0 && completed >= bytes {
-		status = TorrentDownloadStatusComplete
+	if item.Download.Status != "" {
+		return item.Download
 	}
-	return DownloadView{
-		Status:         status,
-		CompletedBytes: completed,
-		Bytes:          bytes,
-	}
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
+	return DownloadView{Status: TorrentDownloadStatusIdle, Bytes: item.Bytes}
 }

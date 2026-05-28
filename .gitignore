@@ -17,6 +17,9 @@ go.work
 # Build output
 bin/
 
+# Local downloads/runtime data
+mvdl-downloads/
+
 # Frontend dependencies
 node_modules/
 
