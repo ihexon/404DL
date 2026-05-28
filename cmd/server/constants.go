@@ -17,7 +17,7 @@ const (
 	FlagTorrentListen = "torrent-listen"
 
 	DefaultListenAddr        = "127.0.0.1:6567"
-	DefaultGetAddr           = "127.0.0.1:6570"
+	DefaultGetAddr           = "127.0.0.1:0"
 	DefaultTorrentListenAddr = ":42069"
 
 	SubCmdGet    = "get"
