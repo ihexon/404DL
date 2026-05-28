@@ -53,10 +53,10 @@ type SearchRequest struct {
 }
 
 type SearchResponse struct {
-	Hits []torrent `json:"hits"`
+	Hits []searchHit `json:"hits"`
 }
 
-type torrent struct {
+type searchHit struct {
 	Bytes     int64   `json:"bytes"`
 	Category  string  `json:"category,omitempty"`
 	Date      string  `json:"date,omitempty"`
@@ -71,7 +71,7 @@ func (c *Client) Name() string {
 	return "knaben"
 }
 
-func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
+func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.SearchResult, error) {
 	fields := logging.MergeFields(ctx, logrus.Fields{
 		"provider": c.Name(),
 		"query":    req.Query,
@@ -97,7 +97,7 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
 	logrus.WithFields(fields).Info("knaben api response decoded")
 
-	out := make([]model.Torrent, 0, len(hits))
+	out := make([]model.SearchResult, 0, len(hits))
 	magnetCount := 0
 	hashCount := 0
 	for _, hit := range hits {
@@ -108,7 +108,7 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 		if hit.Hash != nil && strings.TrimSpace(*hit.Hash) != "" {
 			hashCount++
 		}
-		out = append(out, model.Torrent{
+		out = append(out, model.SearchResult{
 			Provider:  c.Name(),
 			Title:     hit.Title,
 			Bytes:     hit.Bytes,
@@ -128,7 +128,7 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	return out, nil
 }
 
-func (c *Client) search(ctx context.Context, req SearchRequest) ([]torrent, error) {
+func (c *Client) search(ctx context.Context, req SearchRequest) ([]searchHit, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal knaben request: %w", err)
@@ -164,7 +164,7 @@ func (c *Client) search(ctx context.Context, req SearchRequest) ([]torrent, erro
 		return nil, fmt.Errorf("decode knaben response: %w", err)
 	}
 	if out.Hits == nil {
-		out.Hits = []torrent{}
+		out.Hits = []searchHit{}
 	}
 
 	return out.Hits, nil

@@ -34,7 +34,7 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.TorrentListenAddr = defaultTorrentListenAddr
 	}
 
-	items, err := loadQueryResults(cfg.InputPath, cfg.CryptoKey)
+	items, err := loadSearchResults(cfg.InputPath, cfg.CryptoKey)
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ type SearchRequest struct {
 
 type Provider interface {
 	Name() string
-	Search(ctx context.Context, req SearchRequest) ([]model.Torrent, error)
+	Search(ctx context.Context, req SearchRequest) ([]model.SearchResult, error)
 }
 
 type Aggregator struct {
@@ -34,7 +34,7 @@ func NewAggregator(providers ...Provider) *Aggregator {
 	return &Aggregator{providers: append([]Provider(nil), providers...)}
 }
 
-func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Torrent, error) {
+func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.SearchResult, error) {
 	if len(a.providers) == 0 {
 		logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
 			"query": req.Query,
@@ -53,7 +53,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 
 	type result struct {
 		provider   string
-		torrents   []model.Torrent
+		results    []model.SearchResult
 		err        error
 		durationMS int64
 	}
@@ -72,16 +72,16 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 			})
 			logrus.WithFields(providerFields).Info("provider search started")
 
-			torrents, err := p.Search(ctx, req)
+			searchResults, err := p.Search(ctx, req)
 			durationMS := logging.DurationMillis(time.Since(providerStartedAt))
 			if err != nil {
 				results <- result{provider: p.Name(), err: fmt.Errorf("%s: %w", p.Name(), err), durationMS: durationMS}
 				return
 			}
-			providerFields["result_count"] = len(torrents)
+			providerFields["result_count"] = len(searchResults)
 			providerFields["duration_ms"] = durationMS
 			logrus.WithFields(providerFields).Info("provider search completed")
-			results <- result{provider: p.Name(), torrents: torrents, durationMS: durationMS}
+			results <- result{provider: p.Name(), results: searchResults, durationMS: durationMS}
 		}(p)
 	}
 
@@ -89,7 +89,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 	close(results)
 
 	var (
-		merged          []model.Torrent
+		merged          []model.SearchResult
 		errs            []error
 		okProviders     []string
 		failedProviders []string
@@ -108,7 +108,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 			continue
 		}
 		okProviders = append(okProviders, res.provider)
-		merged = append(merged, res.torrents...)
+		merged = append(merged, res.results...)
 	}
 
 	if len(merged) == 0 && len(errs) > 0 {
@@ -133,7 +133,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Tor
 		merged = merged[:req.Limit]
 		limited = true
 	}
-	merged = append([]model.Torrent(nil), merged...)
+	merged = append([]model.SearchResult(nil), merged...)
 
 	logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
 		"query":              req.Query,
@@ -159,52 +159,52 @@ func providerNames(providers []Provider) []string {
 	return names
 }
 
-func dedupe(torrents []model.Torrent) []model.Torrent {
-	positions := make(map[string]int, len(torrents))
-	deduped := make([]model.Torrent, 0, len(torrents))
-	for _, torrent := range torrents {
-		key := dedupeKey(torrent)
+func dedupe(results []model.SearchResult) []model.SearchResult {
+	positions := make(map[string]int, len(results))
+	deduped := make([]model.SearchResult, 0, len(results))
+	for _, result := range results {
+		key := dedupeKey(result)
 		if key == "" {
-			deduped = append(deduped, torrent)
+			deduped = append(deduped, result)
 			continue
 		}
 		pos, ok := positions[key]
 		if ok {
-			if torrent.Seeders > deduped[pos].Seeders {
-				deduped[pos] = torrent
+			if result.Seeders > deduped[pos].Seeders {
+				deduped[pos] = result
 			}
 			continue
 		}
 		positions[key] = len(deduped)
-		deduped = append(deduped, torrent)
+		deduped = append(deduped, result)
 	}
 	return deduped
 }
 
-func dedupeKey(torrent model.Torrent) string {
-	if torrent.Hash != nil {
-		hash := strings.TrimSpace(*torrent.Hash)
+func dedupeKey(result model.SearchResult) string {
+	if result.Hash != nil {
+		hash := strings.TrimSpace(*result.Hash)
 		if hash != "" {
 			return "hash:" + strings.ToLower(hash)
 		}
 	}
-	if torrent.MagnetURL != nil {
-		magnetURL := strings.TrimSpace(*torrent.MagnetURL)
+	if result.MagnetURL != nil {
+		magnetURL := strings.TrimSpace(*result.MagnetURL)
 		if magnetURL != "" {
 			return "magnet:" + strings.ToLower(magnetURL)
 		}
 	}
-	title := strings.ToLower(strings.TrimSpace(torrent.Title))
+	title := strings.ToLower(strings.TrimSpace(result.Title))
 	if title == "" {
 		return ""
 	}
 	parts := []string{
-		"torrent",
-		strings.ToLower(strings.TrimSpace(torrent.Provider)),
+		"result",
+		strings.ToLower(strings.TrimSpace(result.Provider)),
 		title,
 	}
-	if torrent.Bytes > 0 {
-		parts = append(parts, strconv.FormatInt(torrent.Bytes, 10))
+	if result.Bytes > 0 {
+		parts = append(parts, strconv.FormatInt(result.Bytes, 10))
 	}
 	return strings.Join(parts, ":")
 }

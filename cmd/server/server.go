@@ -41,7 +41,7 @@ func runServer(c *cli.Context) error {
 }
 
 func newSearchHandler(cfg server.Config, providerNames ...string) (*server.Handler, error) {
-	searcher, err := newTorrentSearcher(cfg.HTTPClient, providerNames...)
+	searcher, err := newSearchAggregator(cfg.HTTPClient, providerNames...)
 	if err != nil {
 		return nil, err
 	}

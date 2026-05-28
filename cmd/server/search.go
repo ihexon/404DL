@@ -17,15 +17,15 @@ import (
 
 func runSearch(c *cli.Context) error {
 	startedAt := time.Now()
-	searchName := c.Args().First()
-	if searchName == "" {
-		return fmt.Errorf("movie name is required")
+	searchQuery := c.Args().First()
+	if searchQuery == "" {
+		return fmt.Errorf("search query is required")
 	}
 
 	client := &http.Client{Timeout: c.Duration(FlagTimeout)}
 
 	providerNames := c.StringSlice(FlagProvider)
-	searcher, err := newTorrentSearcher(client, providerNames...)
+	searcher, err := newSearchAggregator(client, providerNames...)
 	if err != nil {
 		return err
 	}
@@ -33,31 +33,31 @@ func runSearch(c *cli.Context) error {
 	requestID := logging.NewRequestID()
 	logrus.WithFields(logrus.Fields{
 		"request_id": requestID,
-		"search":     searchName,
+		"query":      searchQuery,
 		"providers":  providerNames,
 		"limit":      c.Int(FlagPageSize),
 		"timeout":    client.Timeout.String(),
 	}).Info("search request started")
 
 	ctx := logging.WithRequestID(c.Context, requestID)
-	hits, err := searcher.Search(ctx, provider.SearchRequest{
-		Query: searchName,
+	results, err := searcher.Search(ctx, provider.SearchRequest{
+		Query: searchQuery,
 		Limit: c.Int(FlagPageSize),
 	})
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"request_id":  requestID,
-			"search":      searchName,
+			"query":       searchQuery,
 			"providers":   providerNames,
 			"duration_ms": logging.DurationMillis(time.Since(startedAt)),
 		}).Error("search request failed")
-		return fmt.Errorf("search torrents: %w", err)
+		return fmt.Errorf("search: %w", err)
 	}
 	logrus.WithFields(logrus.Fields{
 		"request_id":  requestID,
-		"search":      searchName,
+		"query":       searchQuery,
 		"providers":   providerNames,
-		"count":       len(hits),
+		"count":       len(results),
 		"duration_ms": logging.DurationMillis(time.Since(startedAt)),
 	}).Info("search request completed")
 
@@ -66,20 +66,20 @@ func runSearch(c *cli.Context) error {
 		return err
 	}
 	if encryptMagnets {
-		encrypted, encryptedCount, err := server.EncryptMagnets(hits, encryptor)
+		encrypted, encryptedCount, err := server.EncryptMagnetURLs(results, encryptor)
 		if err != nil {
 			return fmt.Errorf("encrypt magnetUrl: %w", err)
 		}
-		hits = encrypted
+		results = encrypted
 		logrus.WithFields(logrus.Fields{
 			"request_id":        requestID,
 			"encrypted_magnets": encryptedCount,
 			"magnet_encryption": true,
-		}).Info("query magnet URLs encrypted")
+		}).Info("search result magnet URLs encrypted")
 	}
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(hits)
+	return encoder.Encode(results)
 }

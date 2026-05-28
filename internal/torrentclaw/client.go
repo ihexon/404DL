@@ -65,11 +65,11 @@ type searchResponse struct {
 }
 
 type searchResult struct {
-	Title    string        `json:"title"`
-	Torrents []torrentInfo `json:"torrents"`
+	Title      string              `json:"title"`
+	Candidates []downloadCandidate `json:"torrents"`
 }
 
-type torrentInfo struct {
+type downloadCandidate struct {
 	InfoHash   string `json:"infoHash"`
 	RawTitle   string `json:"rawTitle"`
 	SizeBytes  int64  `json:"sizeBytes"`
@@ -79,7 +79,7 @@ type torrentInfo struct {
 	UploadedAt string `json:"uploadedAt"`
 }
 
-func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.Torrent, error) {
+func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]model.SearchResult, error) {
 	fields := logging.MergeFields(ctx, logrus.Fields{
 		"provider": c.Name(),
 		"query":    req.Query,
@@ -97,8 +97,8 @@ func (c *Client) Search(ctx context.Context, req provider.SearchRequest) ([]mode
 	c.logAuthNotice(ctx, resp)
 
 	out := c.flatten(resp)
-	fields["contents"] = len(resp.Results)
-	fields["torrents"] = len(out)
+	fields["raw_groups"] = len(resp.Results)
+	fields["normalized_results"] = len(out)
 	fields["notice"] = logging.Truncate(resp.Notice, 200)
 	fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
 	fields["with_hash"] = countHashes(out)
@@ -164,20 +164,20 @@ func (c *Client) searchPage(ctx context.Context, query string) (searchResponse, 
 	return out, nil
 }
 
-func (c *Client) flatten(resp searchResponse) []model.Torrent {
-	var out []model.Torrent
+func (c *Client) flatten(resp searchResponse) []model.SearchResult {
+	var out []model.SearchResult
 	for _, result := range resp.Results {
-		for _, torrent := range result.Torrents {
-			hash := torrent.InfoHash
-			out = append(out, model.Torrent{
+		for _, item := range result.Candidates {
+			hash := item.InfoHash
+			out = append(out, model.SearchResult{
 				Provider:  c.Name(),
-				Title:     firstNonEmpty(torrent.RawTitle, result.Title),
-				Bytes:     torrent.SizeBytes,
-				Date:      torrent.UploadedAt,
+				Title:     firstNonEmpty(item.RawTitle, result.Title),
+				Bytes:     item.SizeBytes,
+				Date:      item.UploadedAt,
 				Hash:      stringPtr(hash),
-				MagnetURL: magnet.NormalizeURLPtr(stringPtr(torrent.MagnetURL)),
-				Peers:     torrent.Leechers,
-				Seeders:   torrent.Seeders,
+				MagnetURL: magnet.NormalizeURLPtr(stringPtr(item.MagnetURL)),
+				Peers:     item.Leechers,
+				Seeders:   item.Seeders,
 			})
 		}
 	}
@@ -200,20 +200,20 @@ func stringPtr(value string) *string {
 	return &value
 }
 
-func countHashes(torrents []model.Torrent) int {
+func countHashes(results []model.SearchResult) int {
 	count := 0
-	for _, torrent := range torrents {
-		if torrent.Hash != nil && strings.TrimSpace(*torrent.Hash) != "" {
+	for _, result := range results {
+		if result.Hash != nil && strings.TrimSpace(*result.Hash) != "" {
 			count++
 		}
 	}
 	return count
 }
 
-func countMagnets(torrents []model.Torrent) int {
+func countMagnets(results []model.SearchResult) int {
 	count := 0
-	for _, torrent := range torrents {
-		if torrent.MagnetURL != nil && strings.TrimSpace(*torrent.MagnetURL) != "" {
+	for _, result := range results {
+		if result.MagnetURL != nil && strings.TrimSpace(*result.MagnetURL) != "" {
 			count++
 		}
 	}

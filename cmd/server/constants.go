@@ -25,6 +25,6 @@ const (
 	DefaultTorrentListenAddr = ":42069"
 
 	SubCmdGet    = "get"
-	SubCmdQuery  = "query"
+	SubCmdSearch = "search"
 	SubCmdServer = "server"
 )
