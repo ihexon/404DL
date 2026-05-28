@@ -18,14 +18,14 @@ import (
 )
 
 const (
-	defaultTorrentListenAddr = ":42069"
+	defaultTorrentListenAddr = ":0"
 	slowRequestThreshold     = 2 * time.Second
 )
 
 func Run(ctx context.Context, cfg Config) error {
 	startedAt := time.Now()
 	if cfg.ListenAddr == "" {
-		cfg.ListenAddr = "127.0.0.1:6570"
+		cfg.ListenAddr = "127.0.0.1:0"
 	}
 	if cfg.InputPath == "" {
 		cfg.InputPath = "-"

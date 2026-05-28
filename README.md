@@ -82,7 +82,7 @@ Run a long-lived local Search API server when you want to call 404 Downloader
 from scripts, tools, or the interactive API docs:
 
 ```bash
-./bin/4dl server
+./bin/4dl server --listen 127.0.0.1:6567
 ```
 
 Open the API docs:
@@ -162,7 +162,7 @@ Common options:
 ```text
 search --limit-size 50 --timeout 8s
 server --listen 127.0.0.1:6567 --limit-size 50 --timeout 8s
-get --listen 127.0.0.1:6570 --save-to ./downloads
+get --listen 127.0.0.1:6570 --torrent-listen :42069 --save-to ./downloads
 ```
 
 Environment variables are reserved for sensitive values:
