@@ -1,12 +1,12 @@
 # mvdl
 
-mvdl is a Go torrent search utility with a local web UI for selected search
-results.
+mvdl is a Go file search and download utility with a local web UI for selected
+search results.
 
 It has two main workflows:
 
-- `server` exposes a small JSON search API.
-- `query | get` turns provider search results into a local web UI that can
+- `server` exposes a small JSON file search API.
+- `search | get` turns provider search results into a local web UI that can
   load torrent metadata, download files through BitTorrent, and show live
   runtime diagnostics.
 
@@ -18,16 +18,16 @@ Start the API server:
 go run ./cmd/server server
 ```
 
-Query torrents:
+Search files:
 
 ```text
-GET /v1/t?search={search term}
+GET /v1/search?q={search query}
 ```
 
 Example:
 
 ```bash
-curl --noproxy '*' 'http://127.0.0.1:6567/v1/t?search=mortal%20kombat%20ii%202160p'
+curl --noproxy '*' 'http://127.0.0.1:6567/v1/search?q=mortal%20kombat%20ii%202160p'
 ```
 
 The response is a normalized JSON array:
@@ -52,7 +52,7 @@ Errors use a structured response:
 {
   "error": {
     "code": "bad_request",
-    "message": "search name is required"
+    "message": "search query is required"
   }
 }
 ```
@@ -73,25 +73,25 @@ Change the listen address:
 go run ./cmd/server server --listen :18080
 ```
 
-Search providers directly and print JSON:
+Search files through providers and print JSON:
 
 ```bash
-go run ./cmd/server query "mortal kombat ii 2160p"
+go run ./cmd/server search "mortal kombat ii 2160p"
 ```
 
 Limit providers while debugging:
 
 ```bash
-go run ./cmd/server query --provider knaben --provider torrentclaw "mortal kombat ii"
+go run ./cmd/server search --provider knaben --provider torrentclaw "mortal kombat ii"
 ```
 
-Serve query results through the local get UI:
+Serve search results through the local get UI:
 
 ```bash
-go run ./cmd/server query "mortal kombat ii" | go run ./cmd/server get --stdin
+go run ./cmd/server search "mortal kombat ii" | go run ./cmd/server get --stdin
 ```
 
-Serve saved query results:
+Serve saved search results:
 
 ```bash
 go run ./cmd/server get --input results.json
@@ -99,7 +99,7 @@ go run ./cmd/server get --input results.json
 
 ## get UI
 
-`get` listens on `127.0.0.1:6570` by default. It reads query JSON, opens a
+`get` listens on `127.0.0.1:6570` by default. It reads search result JSON, opens a
 local web UI, and uses anacrolix/torrent to resolve metadata and download files
 directly through BitTorrent into `--save-to`.
 
@@ -150,7 +150,7 @@ MVDL_CRYKEY=
 `TORRENTCLAW_API_KEY` is sent as `Authorization: Bearer <key>` when configured.
 TorrentClaw may require an API key for magnet links.
 
-`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server` or `query`,
+`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server` or `search`,
 non-empty `magnetUrl` values are encrypted with AES-256-GCM before being
 returned. When it is set for `get`, encrypted magnet values from saved API
 results are decrypted before metadata loading.
@@ -158,8 +158,8 @@ results are decrypted before metadata loading.
 get flags:
 
 ```text
---input          query JSON input file
---stdin          read query JSON from stdin
+--input          search result JSON input file
+--stdin          read search result JSON from stdin
 --listen         HTTP listen address, default 127.0.0.1:6570
 --save-to        directory to save downloaded files
 --torrent-listen BitTorrent listen address, default :42069

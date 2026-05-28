@@ -36,7 +36,7 @@ var providerFactories = []providerFactory{
 	},
 }
 
-func newTorrentSearcher(client *http.Client, providerNames ...string) (*provider.Aggregator, error) {
+func newSearchAggregator(client *http.Client, providerNames ...string) (*provider.Aggregator, error) {
 	providers, err := newSearchProviders(client, providerNames...)
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func newTorrentSearcher(client *http.Client, providerNames ...string) (*provider
 	logrus.WithFields(logrus.Fields{
 		"providers": providerNamesFromInstances(providers),
 		"timeout":   clientTimeoutString(client),
-	}).Info("torrent searcher configured")
+	}).Info("search aggregator configured")
 	return provider.NewAggregator(providers...), nil
 }
 

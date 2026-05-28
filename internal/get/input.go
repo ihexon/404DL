@@ -16,7 +16,7 @@ import (
 	"mvdl/internal/model"
 )
 
-func loadQueryResults(path, cryptoKey string) ([]TorrentItem, error) {
+func loadSearchResults(path, cryptoKey string) ([]TorrentItem, error) {
 	startedAt := time.Now()
 	reader, closeFn, err := openInput(path)
 	if err != nil {
@@ -24,11 +24,11 @@ func loadQueryResults(path, cryptoKey string) ([]TorrentItem, error) {
 	}
 	defer closeFn()
 
-	var results []model.Torrent
+	var results []model.SearchResult
 	decoder := json.NewDecoder(reader)
 	if err := decoder.Decode(&results); err != nil {
-		logrus.WithError(err).WithField("input", inputLabel(path)).Error("get query input decode failed")
-		return nil, fmt.Errorf("decode query JSON: %w", err)
+		logrus.WithError(err).WithField("input", inputLabel(path)).Error("get search result input decode failed")
+		return nil, fmt.Errorf("decode search result JSON: %w", err)
 	}
 
 	var encryptor *crypto.StringEncryptor
@@ -57,20 +57,20 @@ func loadQueryResults(path, cryptoKey string) ([]TorrentItem, error) {
 		"encrypted_magnets":  stats.encryptedMagnet,
 		"invalid_magnets":    stats.invalidMagnet,
 		"duration_ms":        time.Since(startedAt).Milliseconds(),
-	}).Info("get query input loaded")
+	}).Info("get search result input loaded")
 	return items, nil
 }
 
 func openInput(path string) (io.Reader, func(), error) {
 	if path == "" || path == "-" {
-		logrus.WithField("input", "stdin").Info("get query input opened")
+		logrus.WithField("input", "stdin").Info("get search result input opened")
 		return os.Stdin, func() {}, nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open input file %q: %w", path, err)
 	}
-	logrus.WithField("input", path).Info("get query input opened")
+	logrus.WithField("input", path).Info("get search result input opened")
 	return file, func() { _ = file.Close() }, nil
 }
 
@@ -83,7 +83,7 @@ type inputStats struct {
 	invalidMagnet   int
 }
 
-func torrentItemFromResult(index int, result model.Torrent, encryptor *crypto.StringEncryptor, stats *inputStats) TorrentItem {
+func torrentItemFromResult(index int, result model.SearchResult, encryptor *crypto.StringEncryptor, stats *inputStats) TorrentItem {
 	item := TorrentItem{
 		ID:       fmt.Sprintf("%d", index),
 		Title:    result.Title,

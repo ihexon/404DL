@@ -9,10 +9,10 @@ import (
 func newApp() *cli.App {
 	return &cli.App{
 		Name:  "mvdl",
-		Usage: "movie torrent search utility",
+		Usage: "file search and download utility",
 		Commands: []*cli.Command{
 			newServerCommand(),
-			newQueryCommand(),
+			newSearchCommand(),
 			newGetCommand(),
 		},
 	}
@@ -21,7 +21,7 @@ func newApp() *cli.App {
 func newServerCommand() *cli.Command {
 	return &cli.Command{
 		Name:   SubCmdServer,
-		Usage:  "start movie search API server",
+		Usage:  "start file search API server",
 		Flags:  serverFlags(),
 		Action: runServer,
 	}
@@ -50,11 +50,11 @@ func serverFlags() []cli.Flag {
 	}
 }
 
-func newQueryCommand() *cli.Command {
+func newSearchCommand() *cli.Command {
 	return &cli.Command{
-		Name:      SubCmdQuery,
-		Usage:     "query torrent providers directly",
-		UsageText: "mvdl query <search term>",
+		Name:      SubCmdSearch,
+		Usage:     "search files through providers",
+		UsageText: "mvdl search <query>",
 		Flags: []cli.Flag{
 			&cli.DurationFlag{
 				Name:  FlagTimeout,
@@ -78,16 +78,16 @@ func newQueryCommand() *cli.Command {
 func newGetCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdGet,
-		Usage:     "download selected query results through BitTorrent",
-		UsageText: "mvdl query <search term> | mvdl get --stdin\n   mvdl get --input results.json",
+		Usage:     "download selected search results through BitTorrent",
+		UsageText: "mvdl search <query> | mvdl get --stdin\n   mvdl get --input results.json",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  FlagInput,
-				Usage: "query JSON input file",
+				Usage: "search result JSON input file",
 			},
 			&cli.BoolFlag{
 				Name:  FlagStdin,
-				Usage: "read query JSON from stdin",
+				Usage: "read search result JSON from stdin",
 			},
 			&cli.StringFlag{
 				Name:  FlagListen,

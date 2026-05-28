@@ -1,6 +1,6 @@
 package model
 
-type Torrent struct {
+type SearchResult struct {
 	Provider  string  `json:"provider"`
 	Title     string  `json:"title"`
 	Bytes     int64   `json:"bytes,omitempty"`
