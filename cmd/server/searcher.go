@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -13,92 +11,41 @@ import (
 )
 
 type providerFactory struct {
-	name string
-	new  func(*http.Client) provider.Provider
+	new func(*http.Client) provider.Provider
 }
 
 var providerFactories = []providerFactory{
 	{
-		name: "knaben",
 		new: func(client *http.Client) provider.Provider {
-			return knaben.NewClient(envString(envKnabenAPIURL, defaultKnabenAPIURL), client)
+			return knaben.NewClient(defaultKnabenAPIURL, client)
 		},
 	},
 	{
-		name: "torrentclaw",
 		new: func(client *http.Client) provider.Provider {
 			return torrentclaw.NewClient(
-				envString(envTorrentClawAPIURL, defaultTorrentClawURL),
+				defaultTorrentClawURL,
 				client,
-				torrentclaw.WithAPIKey(envString(envTorrentClawAPIKey, "")),
+				torrentclaw.WithAPIKey(secretEnvString(envTorrentClawAPIKey, "")),
 			)
 		},
 	},
 }
 
-func newSearchAggregator(client *http.Client, providerNames ...string) (*provider.Aggregator, error) {
-	providers, err := newSearchProviders(client, providerNames...)
-	if err != nil {
-		return nil, err
-	}
-
+func newSearchAggregator(client *http.Client) *provider.Aggregator {
+	providers := newSearchProviders(client)
 	logrus.WithFields(logrus.Fields{
 		"providers": providerNamesFromInstances(providers),
 		"timeout":   clientTimeoutString(client),
 	}).Info("search aggregator configured")
-	return provider.NewAggregator(providers...), nil
+	return provider.NewAggregator(providers...)
 }
 
-func newSearchProviders(client *http.Client, providerNames ...string) ([]provider.Provider, error) {
-	selected := selectedProviderNames(providerNames)
-	filtered := len(selected) > 0
+func newSearchProviders(client *http.Client) []provider.Provider {
 	out := make([]provider.Provider, 0, len(providerFactories))
-
 	for _, factory := range providerFactories {
-		if !filtered {
-			out = append(out, factory.new(client))
-			continue
-		}
-		if _, ok := selected[factory.name]; ok {
-			out = append(out, factory.new(client))
-			delete(selected, factory.name)
-		}
+		out = append(out, factory.new(client))
 	}
-
-	if len(selected) > 0 {
-		return nil, fmt.Errorf("unknown provider %q (available: %s)", firstSelectedProvider(selected), strings.Join(availableProviderNames(), ", "))
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("no providers selected")
-	}
-	return out, nil
-}
-
-func selectedProviderNames(providerNames []string) map[string]struct{} {
-	selected := map[string]struct{}{}
-	for _, providerName := range providerNames {
-		providerName = strings.ToLower(strings.TrimSpace(providerName))
-		if providerName == "" {
-			continue
-		}
-		selected[providerName] = struct{}{}
-	}
-	return selected
-}
-
-func firstSelectedProvider(selected map[string]struct{}) string {
-	for providerName := range selected {
-		return providerName
-	}
-	return ""
-}
-
-func availableProviderNames() []string {
-	names := make([]string, 0, len(providerFactories))
-	for _, factory := range providerFactories {
-		names = append(names, factory.name)
-	}
-	return names
+	return out
 }
 
 func providerNamesFromInstances(providers []provider.Provider) []string {

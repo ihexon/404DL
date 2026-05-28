@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -110,14 +111,23 @@ func (h *Handler) searchFiles(w http.ResponseWriter, r *http.Request) {
 	fields := logging.HTTPRequestFields(r, requestID)
 	fields["query"] = params.Query
 	fields["limit"] = params.Limit
+	if len(params.Providers) > 0 {
+		fields["providers"] = params.Providers
+	}
 
 	logrus.WithFields(fields).Info("search request started")
 	results, err := h.client.Search(ctx, provider.SearchRequest{
-		Query: params.Query,
-		Limit: params.Limit,
+		Query:     params.Query,
+		Limit:     params.Limit,
+		Providers: params.Providers,
 	})
 	if err != nil {
 		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
+		if errors.Is(err, provider.ErrUnknownProvider) {
+			logrus.WithError(err).WithFields(fields).Warn("search request rejected: unknown provider")
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
 		logrus.WithError(err).WithFields(fields).Error("search request failed")
 		writeError(w, http.StatusBadGateway, "provider_error", err.Error())
 		return
@@ -164,15 +174,17 @@ func EncryptMagnetURLs(results []model.SearchResult, encryptor StringEncryptor) 
 }
 
 type searchParams struct {
-	Query string
-	Limit int
+	Query     string
+	Limit     int
+	Providers []string
 }
 
 func (h *Handler) parseSearchQuery(w http.ResponseWriter, r *http.Request, requestID string) (searchParams, bool) {
 	query := r.URL.Query()
 	params := searchParams{
-		Query: strings.TrimSpace(query.Get("q")),
-		Limit: h.defaultLimit,
+		Query:     strings.TrimSpace(query.Get("q")),
+		Limit:     h.defaultLimit,
+		Providers: normalizedProviders(query["provider"]),
 	}
 
 	fields := logging.HTTPRequestFields(r, requestID)
@@ -210,6 +222,23 @@ func (h *Handler) parseSearchQuery(w http.ResponseWriter, r *http.Request, reque
 	}
 	params.Limit = limit
 	return params, true
+}
+
+func normalizedProviders(providers []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(providers))
+	for _, providerName := range providers {
+		providerName = strings.ToLower(strings.TrimSpace(providerName))
+		if providerName == "" {
+			continue
+		}
+		if _, ok := seen[providerName]; ok {
+			continue
+		}
+		seen[providerName] = struct{}{}
+		out = append(out, providerName)
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

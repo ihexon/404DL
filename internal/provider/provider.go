@@ -17,8 +17,9 @@ import (
 )
 
 type SearchRequest struct {
-	Query string
-	Limit int
+	Query     string
+	Limit     int
+	Providers []string
 }
 
 type Provider interface {
@@ -34,8 +35,14 @@ func NewAggregator(providers ...Provider) *Aggregator {
 	return &Aggregator{providers: append([]Provider(nil), providers...)}
 }
 
+var ErrUnknownProvider = errors.New("unknown provider")
+
 func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.SearchResult, error) {
-	if len(a.providers) == 0 {
+	providers, err := a.selectedProviders(req.Providers)
+	if err != nil {
+		return nil, err
+	}
+	if len(providers) == 0 {
 		logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
 			"query": req.Query,
 			"limit": req.Limit,
@@ -47,8 +54,8 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Sea
 	logrus.WithFields(logging.MergeFields(ctx, logrus.Fields{
 		"query":          req.Query,
 		"limit":          req.Limit,
-		"providers":      len(a.providers),
-		"provider_names": providerNames(a.providers),
+		"providers":      len(providers),
+		"provider_names": providerNames(providers),
 	})).Info("provider aggregation started")
 
 	type result struct {
@@ -58,9 +65,9 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Sea
 		durationMS int64
 	}
 
-	results := make(chan result, len(a.providers))
+	results := make(chan result, len(providers))
 	var wg sync.WaitGroup
-	for _, p := range a.providers {
+	for _, p := range providers {
 		wg.Add(1)
 		go func(p Provider) {
 			defer wg.Done()
@@ -156,6 +163,58 @@ func providerNames(providers []Provider) []string {
 	for _, p := range providers {
 		names = append(names, p.Name())
 	}
+	return names
+}
+
+func (a *Aggregator) selectedProviders(requested []string) ([]Provider, error) {
+	selected := normalizedProviderSet(requested)
+	if len(selected) == 0 {
+		return append([]Provider(nil), a.providers...), nil
+	}
+
+	out := make([]Provider, 0, len(selected))
+	for _, p := range a.providers {
+		name := strings.ToLower(strings.TrimSpace(p.Name()))
+		if _, ok := selected[name]; !ok {
+			continue
+		}
+		out = append(out, p)
+		delete(selected, name)
+	}
+
+	if len(selected) > 0 {
+		return nil, fmt.Errorf("%w %q (available: %s)", ErrUnknownProvider, firstProviderName(selected), strings.Join(sortedProviderNames(a.providers), ", "))
+	}
+	return out, nil
+}
+
+func normalizedProviderSet(providers []string) map[string]struct{} {
+	selected := make(map[string]struct{}, len(providers))
+	for _, providerName := range providers {
+		providerName = strings.ToLower(strings.TrimSpace(providerName))
+		if providerName == "" {
+			continue
+		}
+		selected[providerName] = struct{}{}
+	}
+	return selected
+}
+
+func firstProviderName(providers map[string]struct{}) string {
+	names := make([]string, 0, len(providers))
+	for providerName := range providers {
+		names = append(names, providerName)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
+
+func sortedProviderNames(providers []Provider) []string {
+	names := providerNames(providers)
+	sort.Strings(names)
 	return names
 }
 

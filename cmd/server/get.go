@@ -30,7 +30,7 @@ func runGet(c *cli.Context) error {
 		InputPath:         inputPath,
 		SaveTo:            saveTo,
 		TorrentListenAddr: c.String(FlagTorrentListen),
-		CryptoKey:         envString(envCryptoKey, ""),
+		CryptoKey:         secretEnvString(envCryptoKey, ""),
 	}
 
 	logrus.WithFields(logrus.Fields{

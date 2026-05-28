@@ -28,7 +28,7 @@ GET /openapi.json
 Search files:
 
 ```text
-GET /v1/search?q={search query}&limit={max results}
+GET /v1/search?q={search query}&limit={max results}&provider={provider}
 ```
 
 Example:
@@ -37,7 +37,9 @@ Example:
 curl --noproxy '*' 'http://127.0.0.1:6567/v1/search?q=mortal%20kombat%20ii%202160p&limit=3'
 ```
 
-The OpenAPI document defines response and error schemas.
+Repeat `provider` to select multiple providers. If `provider` is omitted, the
+server searches every configured provider. The OpenAPI document defines
+parameters, response schemas, and error schemas.
 
 `GET /healthz` returns `{ "status": "ok" }`.
 
@@ -55,10 +57,19 @@ Change the listen address:
 go run ./cmd/server server --listen :18080
 ```
 
-Search files through providers and print JSON:
+Search files and print JSON:
 
 ```bash
 go run ./cmd/server search "mortal kombat ii 2160p"
+```
+
+By default, `search` starts an embedded Search API server for the current
+command and queries all providers.
+
+Use a non-default API server:
+
+```bash
+go run ./cmd/server search --server-url http://127.0.0.1:18080 "mortal kombat ii"
 ```
 
 Limit providers while debugging:
@@ -115,28 +126,30 @@ active torrents.
 
 ## Configuration
 
-Environment variables:
+Non-sensitive settings are configured with flags:
 
 ```text
-ADDR=127.0.0.1:6567
-LIMIT_SIZE=50
-UPSTREAM_TIMEOUT=8s
-KNABEN_API_URL=https://api.knaben.org/v1
-TORRENTCLAW_API_URL=https://torrentclaw.com/api/v1
+server --listen 127.0.0.1:6567 --limit-size 50 --timeout 8s
+search --limit-size 50 --timeout 8s
+```
+
+The server's default limit is used when the API `limit` parameter is omitted.
+API limits are capped at 200 by the API handler.
+
+Environment variables are reserved for sensitive values:
+
+```text
 TORRENTCLAW_API_KEY=
 MVDL_CRYKEY=
 ```
 
-`LIMIT_SIZE` is the default result limit when `limit` is omitted. Both values
-are capped at 200 by the API handler.
-
 `TORRENTCLAW_API_KEY` is sent as `Authorization: Bearer <key>` when configured.
 TorrentClaw may require an API key for magnet links.
 
-`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server` or `search`,
-non-empty `magnetUrl` values are encrypted with AES-256-GCM before being
-returned. When it is set for `get`, encrypted magnet values from saved API
-results are decrypted before metadata loading.
+`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server`, non-empty
+`magnetUrl` values are encrypted with AES-256-GCM before being returned. When it
+is set for `get`, encrypted magnet values from saved API results are decrypted
+before metadata loading.
 
 get flags:
 
