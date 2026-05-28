@@ -14,6 +14,7 @@ import (
 	"4dl/internal/crypto"
 	"4dl/internal/magnet"
 	"4dl/internal/model"
+	"4dl/internal/responsecodec"
 )
 
 func loadSearchResults(path, cryptoKey string) ([]TorrentItem, error) {
@@ -24,41 +25,57 @@ func loadSearchResults(path, cryptoKey string) ([]TorrentItem, error) {
 	}
 	defer closeFn()
 
-	var results []model.SearchResult
-	decoder := json.NewDecoder(reader)
-	if err := decoder.Decode(&results); err != nil {
-		logrus.WithError(err).WithField("input", inputLabel(path)).Error("get search result input decode failed")
-		return nil, fmt.Errorf("decode search result JSON: %w", err)
+	input, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read search result input: %w", err)
 	}
 
-	var encryptor *crypto.StringEncryptor
-	if cryptoKey != "" {
-		var err error
-		encryptor, err = crypto.NewStringEncryptor(cryptoKey)
-		if err != nil {
-			return nil, fmt.Errorf("invalid FOURDL_CRYKEY: %w", err)
-		}
+	results, encrypted, err := decodeSearchResults(input, cryptoKey)
+	if err != nil {
+		logrus.WithError(err).WithField("input", inputLabel(path)).Error("get search result input decode failed")
+		return nil, err
 	}
 
 	items := make([]TorrentItem, 0, len(results))
 	stats := inputStats{}
 	for i, result := range results {
-		item := torrentItemFromResult(i, result, encryptor, &stats)
+		item := torrentItemFromResult(i, result, &stats)
 		items = append(items, item)
 	}
 	logrus.WithFields(logrus.Fields{
 		"input":              inputLabel(path),
+		"encrypted_input":    encrypted,
 		"records":            len(results),
 		"items":              len(items),
 		"ready_for_metadata": stats.ready,
 		"unavailable":        stats.unavailable,
 		"with_hash":          stats.withHash,
 		"with_magnet":        stats.withMagnet,
-		"encrypted_magnets":  stats.encryptedMagnet,
 		"invalid_magnets":    stats.invalidMagnet,
 		"duration_ms":        time.Since(startedAt).Milliseconds(),
 	}).Info("get search result input loaded")
 	return items, nil
+}
+
+func decodeSearchResults(input []byte, cryptoKey string) ([]model.SearchResult, bool, error) {
+	encrypted := cryptoKey != ""
+	if encrypted {
+		decryptor, err := crypto.NewStringEncryptor(cryptoKey)
+		if err != nil {
+			return nil, true, fmt.Errorf("invalid FOURDL_CRYKEY: %w", err)
+		}
+		plaintext, _, err := responsecodec.DecryptBody(input, decryptor)
+		if err != nil {
+			return nil, true, fmt.Errorf("decrypt search result input: %w", err)
+		}
+		input = plaintext
+	}
+
+	var results []model.SearchResult
+	if err := json.Unmarshal(input, &results); err != nil {
+		return nil, encrypted, fmt.Errorf("decode search result JSON: %w", err)
+	}
+	return results, encrypted, nil
 }
 
 func openInput(path string) (io.Reader, func(), error) {
@@ -75,15 +92,14 @@ func openInput(path string) (io.Reader, func(), error) {
 }
 
 type inputStats struct {
-	ready           int
-	unavailable     int
-	withHash        int
-	withMagnet      int
-	encryptedMagnet int
-	invalidMagnet   int
+	ready         int
+	unavailable   int
+	withHash      int
+	withMagnet    int
+	invalidMagnet int
 }
 
-func torrentItemFromResult(index int, result model.SearchResult, encryptor *crypto.StringEncryptor, stats *inputStats) TorrentItem {
+func torrentItemFromResult(index int, result model.SearchResult, stats *inputStats) TorrentItem {
 	item := TorrentItem{
 		ID:       fmt.Sprintf("%d", index),
 		Title:    result.Title,
@@ -95,11 +111,8 @@ func torrentItemFromResult(index int, result model.SearchResult, encryptor *cryp
 		Peers:    result.Peers,
 	}
 
-	magnetURL, encryptedMagnet, magnetErr := resolveMagnet(result.MagnetURL, encryptor)
-	if encryptedMagnet {
-		stats.encryptedMagnet++
-	}
-	if magnetErr == nil && magnetURL != "" {
+	magnetURL := resolveMagnet(result.MagnetURL)
+	if magnetURL != "" {
 		item.MagnetURL = magnetURL
 		stats.withMagnet++
 		if magnet, err := metainfo.ParseMagnetUri(magnetURL); err == nil {
@@ -128,45 +141,25 @@ func torrentItemFromResult(index int, result model.SearchResult, encryptor *cryp
 	}
 
 	stats.unavailable++
-	if magnetErr != nil {
-		item.Error = magnetErr.Error()
-		logrus.WithError(magnetErr).WithFields(logrus.Fields{
-			"index":    index,
-			"title":    result.Title,
-			"provider": result.Provider,
-		}).Warn("get torrent item unavailable")
-	} else {
-		item.Error = "missing hash and magnetUrl"
-		logrus.WithFields(logrus.Fields{
-			"index":    index,
-			"title":    result.Title,
-			"provider": result.Provider,
-		}).Warn("get torrent item unavailable: missing hash and magnetUrl")
-	}
+	item.Error = "missing hash and magnetUrl"
+	logrus.WithFields(logrus.Fields{
+		"index":    index,
+		"title":    result.Title,
+		"provider": result.Provider,
+	}).Warn("get torrent item unavailable: missing hash and magnetUrl")
 	return item
 }
 
-func resolveMagnet(value *string, encryptor *crypto.StringEncryptor) (string, bool, error) {
+func resolveMagnet(value *string) string {
 	if value == nil || strings.TrimSpace(*value) == "" {
-		return "", false, nil
+		return ""
 	}
 
 	raw := magnet.NormalizeURL(*value)
 	if magnet.HasScheme(raw) {
-		return raw, false, nil
+		return raw
 	}
-
-	if encryptor == nil {
-		return "", true, fmt.Errorf("magnetUrl is encrypted but FOURDL_CRYKEY is not set")
-	}
-	magnetURL, err := encryptor.DecryptString(raw)
-	if err != nil {
-		return "", true, fmt.Errorf("decrypt magnetUrl: %w", err)
-	}
-	if !magnet.HasScheme(magnetURL) {
-		return "", true, fmt.Errorf("decrypted magnetUrl is not a magnet URL")
-	}
-	return magnetURL, true, nil
+	return ""
 }
 
 func inputLabel(path string) string {

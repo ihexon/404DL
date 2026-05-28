@@ -76,6 +76,16 @@
               "knaben",
               "torrentclaw"
             ]
+          },
+          {
+            "name": "X-4DL-Require-Encrypted",
+            "in": "header",
+            "required": false,
+            "description": "Set to true to require an encrypted response body. The server returns 412 if response encryption is not configured.",
+            "schema": {
+              "type": "string",
+              "const": "true"
+            }
           }
         ],
         "responses": {
@@ -84,6 +94,12 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestID"
+              },
+              "X-4DL-Encrypted": {
+                "$ref": "#/components/headers/EncryptedResponse"
+              },
+              "X-4DL-Encryption": {
+                "$ref": "#/components/headers/ResponseEncryption"
               }
             },
             "content": {
@@ -94,11 +110,19 @@
                     "$ref": "#/components/schemas/SearchResult"
                   }
                 }
+              },
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/EncryptedResponseBody"
+                }
               }
             }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "412": {
+            "$ref": "#/components/responses/EncryptionRequired"
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
@@ -117,11 +141,51 @@
         "schema": {
           "type": "string"
         }
+      },
+      "EncryptedResponse": {
+        "description": "Present with value true when the response body is encrypted.",
+        "schema": {
+          "type": "string",
+          "const": "true"
+        }
+      },
+      "ResponseEncryption": {
+        "description": "Response body encryption format.",
+        "schema": {
+          "type": "string",
+          "const": "aes-256-gcm-base64"
+        }
       }
     },
     "responses": {
       "BadRequest": {
         "description": "The request query parameters are invalid, including unknown providers.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestID"
+          },
+          "X-4DL-Encrypted": {
+            "$ref": "#/components/headers/EncryptedResponse"
+          },
+          "X-4DL-Encryption": {
+            "$ref": "#/components/headers/ResponseEncryption"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          },
+          "text/plain": {
+            "schema": {
+              "$ref": "#/components/schemas/EncryptedResponseBody"
+            }
+          }
+        }
+      },
+      "EncryptionRequired": {
+        "description": "The client required encrypted response bodies but the server is not configured with FOURDL_CRYKEY.",
         "headers": {
           "X-Request-ID": {
             "$ref": "#/components/headers/RequestID"
@@ -140,12 +204,23 @@
         "headers": {
           "X-Request-ID": {
             "$ref": "#/components/headers/RequestID"
+          },
+          "X-4DL-Encrypted": {
+            "$ref": "#/components/headers/EncryptedResponse"
+          },
+          "X-4DL-Encryption": {
+            "$ref": "#/components/headers/ResponseEncryption"
           }
         },
         "content": {
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/ErrorResponse"
+            }
+          },
+          "text/plain": {
+            "schema": {
+              "$ref": "#/components/schemas/EncryptedResponseBody"
             }
           }
         }
@@ -155,12 +230,23 @@
         "headers": {
           "X-Request-ID": {
             "$ref": "#/components/headers/RequestID"
+          },
+          "X-4DL-Encrypted": {
+            "$ref": "#/components/headers/EncryptedResponse"
+          },
+          "X-4DL-Encryption": {
+            "$ref": "#/components/headers/ResponseEncryption"
           }
         },
         "content": {
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/ErrorResponse"
+            }
+          },
+          "text/plain": {
+            "schema": {
+              "$ref": "#/components/schemas/EncryptedResponseBody"
             }
           }
         }
@@ -225,7 +311,7 @@
           },
           "magnetUrl": {
             "type": "string",
-            "description": "Magnet URL or encrypted magnet token when FOURDL_CRYKEY is set."
+            "description": "Magnet URL when available."
           }
         },
         "additionalProperties": false
@@ -236,6 +322,10 @@
           "knaben",
           "torrentclaw"
         ]
+      },
+      "EncryptedResponseBody": {
+        "type": "string",
+        "description": "Base64 AES-256-GCM encrypted JSON response body when the client requires encryption and the server is configured with FOURDL_CRYKEY."
       },
       "ErrorResponse": {
         "type": "object",
@@ -260,6 +350,7 @@
             "type": "string",
             "enum": [
               "bad_request",
+              "encryption_required",
               "provider_error",
               "internal_server_error"
             ]

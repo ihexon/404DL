@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"4dl/internal/crypto"
+	"4dl/internal/responsecodec"
 	"4dl/internal/server"
 )
 
@@ -20,10 +21,10 @@ func runServer(c *cli.Context) error {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"listen":            cfg.Addr,
-		"default_limit":     cfg.DefaultLimit,
-		"upstream_timeout":  cfg.HTTPClient.Timeout.String(),
-		"magnet_encryption": cfg.MagnetEncryptor != nil,
+		"listen":                        cfg.Addr,
+		"default_limit":                 cfg.DefaultLimit,
+		"upstream_timeout":              cfg.HTTPClient.Timeout.String(),
+		"response_encryption_available": cfg.ResponseEncryptor != nil,
 	}).Info("server configured")
 
 	handler := newSearchHandler(cfg)
@@ -52,8 +53,8 @@ func newServerConfig(c *cli.Context) (server.Config, error) {
 	return cfg, nil
 }
 
-func newSearchServerConfig(defaultLimit int, upstreamTimeout time.Duration, warnMissingCryptoKey bool) (server.Config, error) {
-	magnetEncryptor, err := newMagnetEncryptor(warnMissingCryptoKey)
+func newSearchServerConfig(defaultLimit int, upstreamTimeout time.Duration, warnMissingResponseKey bool) (server.Config, error) {
+	responseEncryptor, err := newResponseEncryptor(warnMissingResponseKey)
 	if err != nil {
 		return server.Config{}, err
 	}
@@ -62,31 +63,31 @@ func newSearchServerConfig(defaultLimit int, upstreamTimeout time.Duration, warn
 		HTTPClient: &http.Client{
 			Timeout: upstreamTimeout,
 		},
-		MagnetEncryptor: magnetEncryptor,
+		ResponseEncryptor: responseEncryptor,
 	}, nil
 }
 
-func newMagnetEncryptor(warnMissing bool) (server.StringEncryptor, error) {
-	encryptor, enabled, err := newOptionalMagnetEncryptor()
+func newResponseEncryptor(warnMissing bool) (responsecodec.Encryptor, error) {
+	encryptor, enabled, err := newOptionalResponseEncryptor()
 	if !enabled {
 		if warnMissing {
-			logrus.Warnf("magnetUrl encryption disabled: environment var %s is not set", envCryptoKey)
+			logrus.Warnf("server response encryption disabled: environment var %s is not set", envCryptoKey)
 		}
 		return nil, nil
 	}
 	return encryptor, err
 }
 
-func newOptionalMagnetEncryptor() (server.StringEncryptor, bool, error) {
+func newOptionalResponseEncryptor() (responsecodec.Encryptor, bool, error) {
 	key := secretEnvString("", envCryptoKey)
 	if key == "" {
 		return nil, false, nil
 	}
 	encryptor, err := crypto.NewStringEncryptor(key)
 	if err != nil {
-		return nil, true, fmt.Errorf("invalid magnetUrl encryption key: %w", err)
+		return nil, true, fmt.Errorf("invalid response encryption key: %w", err)
 	}
-	logrus.WithField("key_length", len(key)).Info("magnetUrl encryption enabled")
+	logrus.WithField("key_length", len(key)).Info("server response encryption enabled")
 	return encryptor, true, nil
 }
 

@@ -122,8 +122,10 @@ FOURDL_CRYKEY=
 
 `TORRENTCLAW_API_KEY` is used when TorrentClaw requires an API key.
 
-`FOURDL_CRYKEY` enables encryption for returned magnet URLs and decryption when
-loading encrypted saved results. It must be exactly 32 bytes.
+`FOURDL_CRYKEY` enables AES-256-GCM encryption for Search API response bodies.
+When `search` has this key locally, it requests an encrypted response and
+refuses plaintext responses. When `get` has this key locally, it decrypts its
+search-result input before reading JSON. It must be exactly 32 bytes.
 
 ## Docker
 
