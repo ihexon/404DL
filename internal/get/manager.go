@@ -431,11 +431,13 @@ func (m *Manager) DeleteDownload(ctx context.Context, id string) (TorrentItem, b
 		t.CancelPieces(0, int(t.NumPieces()))
 		t.DisallowDataDownload()
 		if t.Info() != nil {
-			deleteErr = m.deleteTorrentFiles(t)
+			paths := m.torrentFilePaths(t)
+			t.Drop()
+			deleteErr = m.deleteFiles(paths)
 		} else {
+			t.Drop()
 			deleteErr = m.deleteItemFiles(id)
 		}
-		t.Drop()
 	} else {
 		deleteErr = m.deleteItemFiles(id)
 	}
@@ -509,19 +511,18 @@ func (m *Manager) deleteItemFiles(id string) error {
 		paths = append(paths, file.SavePath, file.SavePath+".part")
 	}
 	m.mu.Unlock()
-	for _, path := range paths {
-		if err := removeSavedPath(m.saveTo, path); err != nil {
-			return err
-		}
-	}
-	return nil
+	return m.deleteFiles(paths)
 }
 
-func (m *Manager) deleteTorrentFiles(t *torrent.Torrent) error {
+func (m *Manager) torrentFilePaths(t *torrent.Torrent) []string {
 	paths := make([]string, 0, len(t.Files())*2)
 	for _, file := range t.Files() {
 		paths = append(paths, file.Path(), file.Path()+".part")
 	}
+	return paths
+}
+
+func (m *Manager) deleteFiles(paths []string) error {
 	for _, path := range paths {
 		if err := removeSavedPath(m.saveTo, path); err != nil {
 			return err
@@ -535,10 +536,15 @@ func removeSavedPath(root, path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(fullPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("delete saved file %q: %w", fullPath, err)
+	var removeErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		removeErr = os.Remove(fullPath)
+		if removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return nil
+	return fmt.Errorf("delete saved file %q: %w", fullPath, removeErr)
 }
 
 func savedPath(root, path string) (string, error) {
