@@ -11,9 +11,9 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/sirupsen/logrus"
 
-	"mvdl/internal/crypto"
-	"mvdl/internal/magnet"
-	"mvdl/internal/model"
+	"4dl/internal/crypto"
+	"4dl/internal/magnet"
+	"4dl/internal/model"
 )
 
 func loadSearchResults(path, cryptoKey string) ([]TorrentItem, error) {
@@ -36,7 +36,7 @@ func loadSearchResults(path, cryptoKey string) ([]TorrentItem, error) {
 		var err error
 		encryptor, err = crypto.NewStringEncryptor(cryptoKey)
 		if err != nil {
-			return nil, fmt.Errorf("invalid MVDL_CRYKEY: %w", err)
+			return nil, fmt.Errorf("invalid FOURDL_CRYKEY: %w", err)
 		}
 	}
 
@@ -157,7 +157,7 @@ func resolveMagnet(value *string, encryptor *crypto.StringEncryptor) (string, bo
 	}
 
 	if encryptor == nil {
-		return "", true, fmt.Errorf("magnetUrl is encrypted but MVDL_CRYKEY is not set")
+		return "", true, fmt.Errorf("magnetUrl is encrypted but FOURDL_CRYKEY is not set")
 	}
 	magnetURL, err := encryptor.DecryptString(raw)
 	if err != nil {

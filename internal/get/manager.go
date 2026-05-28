@@ -22,7 +22,7 @@ import (
 	"github.com/anacrolix/torrent/storage"
 	"github.com/sirupsen/logrus"
 
-	"mvdl/internal/logging"
+	"4dl/internal/logging"
 )
 
 var errManagerClosed = errors.New("get manager closed")

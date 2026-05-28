@@ -9,8 +9,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	"mvdl/internal/crypto"
-	"mvdl/internal/server"
+	"4dl/internal/crypto"
+	"4dl/internal/server"
 )
 
 func runServer(c *cli.Context) error {
@@ -78,7 +78,7 @@ func newMagnetEncryptor(warnMissing bool) (server.StringEncryptor, error) {
 }
 
 func newOptionalMagnetEncryptor() (server.StringEncryptor, bool, error) {
-	key := secretEnvString(envCryptoKey, "")
+	key := secretEnvString("", envCryptoKey)
 	if key == "" {
 		return nil, false, nil
 	}
@@ -90,9 +90,11 @@ func newOptionalMagnetEncryptor() (server.StringEncryptor, bool, error) {
 	return encryptor, true, nil
 }
 
-func secretEnvString(name, fallback string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
+func secretEnvString(fallback string, names ...string) string {
+	for _, name := range names {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
 	}
 	return fallback
 }

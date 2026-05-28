@@ -1,4 +1,4 @@
-module mvdl
+module 4dl
 
 go 1.26
 

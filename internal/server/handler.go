@@ -13,9 +13,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/swaggest/swgui/v5emb"
 
-	"mvdl/internal/logging"
-	"mvdl/internal/model"
-	"mvdl/internal/provider"
+	"4dl/internal/logging"
+	"4dl/internal/model"
+	"4dl/internal/provider"
 )
 
 type Config struct {
@@ -77,7 +77,7 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /openapi.json", h.openAPI)
-	mux.Handle("GET /docs/", v5emb.New("mvdl Search API", "/openapi.json", "/docs/"))
+	mux.Handle("GET /docs/", v5emb.New("404 Downloader Search API", "/openapi.json", "/docs/"))
 	mux.HandleFunc("GET /docs", redirectToDocs)
 	mux.HandleFunc("GET /v1/search", h.searchFiles)
 	return mux

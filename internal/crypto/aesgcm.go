@@ -14,7 +14,7 @@ type StringEncryptor struct {
 
 func NewStringEncryptor(key string) (*StringEncryptor, error) {
 	if len(key) != 32 {
-		return nil, fmt.Errorf("MVDL_CRYKEY must be 32 bytes for AES-256, got %d", len(key))
+		return nil, fmt.Errorf("FOURDL_CRYKEY must be 32 bytes for AES-256, got %d", len(key))
 	}
 
 	block, err := aes.NewCipher([]byte(key))

@@ -5,13 +5,13 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	searchapi "mvdl/internal/server"
+	searchapi "4dl/internal/server"
 )
 
 func newApp() *cli.App {
 	return &cli.App{
-		Name:  "mvdl",
-		Usage: "file search and download utility",
+		Name:  "4dl",
+		Usage: "404 Downloader file search and download utility",
 		Commands: []*cli.Command{
 			newServerCommand(),
 			newSearchCommand(),
@@ -53,7 +53,7 @@ func newSearchCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdSearch,
 		Usage:     "search files through the Search API",
-		UsageText: "mvdl search <query>",
+		UsageText: "4dl search <query>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  FlagServerURL,
@@ -82,7 +82,7 @@ func newGetCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdGet,
 		Usage:     "download selected search results through BitTorrent",
-		UsageText: "mvdl search <query> | mvdl get --stdin\n   mvdl get --input results.json",
+		UsageText: "4dl search <query> | 4dl get --stdin --save-to <dir>\n   4dl get --input results.json --save-to <dir>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  FlagInput,
@@ -98,8 +98,9 @@ func newGetCommand() *cli.Command {
 				Value: DefaultGetAddr,
 			},
 			&cli.StringFlag{
-				Name:  FlagSaveTo,
-				Usage: "directory to save downloaded files",
+				Name:     FlagSaveTo,
+				Usage:    "directory to save downloaded files",
+				Required: true,
 			},
 			&cli.StringFlag{
 				Name:  FlagTorrentListen,

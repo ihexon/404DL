@@ -5,9 +5,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"mvdl/internal/knaben"
-	"mvdl/internal/provider"
-	"mvdl/internal/torrentclaw"
+	"4dl/internal/knaben"
+	"4dl/internal/provider"
+	"4dl/internal/torrentclaw"
 )
 
 type providerFactory struct {
@@ -25,7 +25,7 @@ var providerFactories = []providerFactory{
 			return torrentclaw.NewClient(
 				defaultTorrentClawURL,
 				client,
-				torrentclaw.WithAPIKey(secretEnvString(envTorrentClawAPIKey, "")),
+				torrentclaw.WithAPIKey(secretEnvString("", envTorrentClawAPIKey)),
 			)
 		},
 	},

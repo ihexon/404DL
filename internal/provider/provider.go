@@ -12,8 +12,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"mvdl/internal/logging"
-	"mvdl/internal/model"
+	"4dl/internal/logging"
+	"4dl/internal/model"
 )
 
 type SearchRequest struct {

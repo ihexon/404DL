@@ -14,7 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	"mvdl/internal/logging"
+	"4dl/internal/logging"
 )
 
 func runSearch(c *cli.Context) error {
