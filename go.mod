@@ -3,9 +3,12 @@ module mvdl
 go 1.26
 
 require (
+	github.com/anacrolix/dht/v2 v2.23.1-0.20260525063928-ec3a9bd99456
 	github.com/anacrolix/torrent v1.61.1-0.20260525064632-ee16caf4f382
 	github.com/sirupsen/logrus v1.9.4
+	github.com/swaggest/swgui v1.8.7
 	github.com/urfave/cli/v2 v2.27.7
+	golang.org/x/time v0.14.0
 )
 
 require (
@@ -13,7 +16,6 @@ require (
 	github.com/alecthomas/atomic v0.1.0-alpha2 // indirect
 	github.com/anacrolix/btree v0.1.1 // indirect
 	github.com/anacrolix/chansync v0.7.0 // indirect
-	github.com/anacrolix/dht/v2 v2.23.1-0.20260525063928-ec3a9bd99456 // indirect
 	github.com/anacrolix/envpprof v1.4.0 // indirect
 	github.com/anacrolix/generics v0.2.0 // indirect
 	github.com/anacrolix/go-libutp v1.3.2 // indirect
@@ -75,6 +77,7 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tidwall/btree v1.8.1 // indirect
+	github.com/vearutop/statigz v1.4.0 // indirect
 	github.com/wlynxg/anet v0.0.3 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect
@@ -88,7 +91,6 @@ require (
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
 	lukechampine.com/blake3 v1.1.6 // indirect
 	modernc.org/libc v1.22.3 // indirect
 	modernc.org/mathutil v1.5.0 // indirect

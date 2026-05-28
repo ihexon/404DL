@@ -20,7 +20,7 @@ func runServer(c *cli.Context) error {
 
 	logrus.WithFields(logrus.Fields{
 		"listen":            cfg.Addr,
-		"page_size":         cfg.PageSize,
+		"default_limit":     cfg.DefaultLimit,
 		"upstream_timeout":  cfg.HTTPClient.Timeout.String(),
 		"magnet_encryption": cfg.MagnetEncryptor != nil,
 	}).Info("server configured")
@@ -55,8 +55,8 @@ func newServerConfig(c *cli.Context) (server.Config, error) {
 	}
 
 	return server.Config{
-		Addr:     c.String(FlagListen),
-		PageSize: c.Int(FlagPageSize),
+		Addr:         c.String(FlagListen),
+		DefaultLimit: server.NormalizeLimit(c.Int(FlagLimitSize)),
 		HTTPClient: &http.Client{
 			Timeout: c.Duration(FlagTimeout),
 		},

@@ -18,44 +18,26 @@ Start the API server:
 go run ./cmd/server server
 ```
 
+Open the interactive OpenAPI documentation:
+
+```text
+GET /docs
+GET /openapi.json
+```
+
 Search files:
 
 ```text
-GET /v1/search?q={search query}
+GET /v1/search?q={search query}&limit={max results}
 ```
 
 Example:
 
 ```bash
-curl --noproxy '*' 'http://127.0.0.1:6567/v1/search?q=mortal%20kombat%20ii%202160p'
+curl --noproxy '*' 'http://127.0.0.1:6567/v1/search?q=mortal%20kombat%20ii%202160p&limit=3'
 ```
 
-The response is a normalized JSON array:
-
-```json
-[
-  {
-    "provider": "torrentclaw",
-    "title": "Example",
-    "bytes": 123456789,
-    "seeders": 10,
-    "peers": 8,
-    "hash": "40b7f6bffcb215e3577ebe55d1090a0c1ec0c64f",
-    "magnetUrl": "magnet:?xt=urn:btih:..."
-  }
-]
-```
-
-Errors use a structured response:
-
-```json
-{
-  "error": {
-    "code": "bad_request",
-    "message": "search query is required"
-  }
-}
-```
+The OpenAPI document defines response and error schemas.
 
 `GET /healthz` returns `{ "status": "ok" }`.
 
@@ -137,7 +119,7 @@ Environment variables:
 
 ```text
 ADDR=127.0.0.1:6567
-PAGE_SIZE=50
+LIMIT_SIZE=50
 UPSTREAM_TIMEOUT=8s
 KNABEN_API_URL=https://api.knaben.org/v1
 TORRENTCLAW_API_URL=https://torrentclaw.com/api/v1
@@ -145,7 +127,8 @@ TORRENTCLAW_API_KEY=
 MVDL_CRYKEY=
 ```
 
-`PAGE_SIZE` is capped at 200 by the API handler.
+`LIMIT_SIZE` is the default result limit when `limit` is omitted. Both values
+are capped at 200 by the API handler.
 
 `TORRENTCLAW_API_KEY` is sent as `Authorization: Bearer <key>` when configured.
 TorrentClaw may require an API key for magnet links.

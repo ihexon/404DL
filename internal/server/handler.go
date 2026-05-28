@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sirupsen/logrus"
+	"github.com/swaggest/swgui/v5emb"
 
 	"mvdl/internal/logging"
 	"mvdl/internal/model"
@@ -16,14 +19,14 @@ import (
 
 type Config struct {
 	Addr            string
-	PageSize        int
+	DefaultLimit    int
 	HTTPClient      *http.Client
 	MagnetEncryptor StringEncryptor
 }
 
 type Handler struct {
 	client          Searcher
-	pageSize        int
+	defaultLimit    int
 	magnetEncryptor StringEncryptor
 }
 
@@ -44,26 +47,37 @@ type StringEncryptor interface {
 	EncryptString(plaintext string) (string, error)
 }
 
+const (
+	DefaultSearchLimit     = 50
+	MaxSearchLimit         = 200
+	MaxSearchQueryLength   = 200
+	openAPISpecContentType = "application/vnd.oai.openapi+json; charset=utf-8"
+)
+
 func NewHandler(client Searcher, cfg Config) *Handler {
-	pageSize := cfg.PageSize
-	if pageSize <= 0 {
-		pageSize = 50
-	}
-
-	if pageSize > 200 {
-		pageSize = 200
-	}
-
 	return &Handler{
 		client:          client,
-		pageSize:        pageSize,
+		defaultLimit:    NormalizeLimit(cfg.DefaultLimit),
 		magnetEncryptor: cfg.MagnetEncryptor,
 	}
+}
+
+func NormalizeLimit(limit int) int {
+	if limit <= 0 {
+		return DefaultSearchLimit
+	}
+	if limit > MaxSearchLimit {
+		return MaxSearchLimit
+	}
+	return limit
 }
 
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.health)
+	mux.HandleFunc("GET /openapi.json", h.openAPI)
+	mux.Handle("GET /docs/", v5emb.New("mvdl Search API", "/openapi.json", "/docs/"))
+	mux.HandleFunc("GET /docs", redirectToDocs)
 	mux.HandleFunc("GET /v1/search", h.searchFiles)
 	return mux
 }
@@ -72,33 +86,35 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (h *Handler) openAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", openAPISpecContentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(openAPISpec)
+}
+
+func redirectToDocs(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+}
+
 func (h *Handler) searchFiles(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	requestID := logging.RequestIDFromHTTP(r)
 	w.Header().Set(logging.RequestIDHeader, requestID)
 	ctx := logging.WithRequestID(r.Context(), requestID)
 
-	params := parseSearchQuery(r)
+	params, ok := h.parseSearchQuery(w, r, requestID)
+	if !ok {
+		return
+	}
+
 	fields := logging.HTTPRequestFields(r, requestID)
 	fields["query"] = params.Query
-	fields["page_size"] = h.pageSize
-
-	if strings.TrimSpace(params.Query) == "" {
-		logrus.WithFields(fields).Warn("search request rejected: missing query")
-		writeError(w, http.StatusBadRequest, "bad_request", "search query is required")
-		return
-	}
-	if len(params.Query) > 200 {
-		fields["query_length"] = len(params.Query)
-		logrus.WithFields(fields).Warn("search request rejected: search too long")
-		writeError(w, http.StatusBadRequest, "bad_request", "search query is too long")
-		return
-	}
+	fields["limit"] = params.Limit
 
 	logrus.WithFields(fields).Info("search request started")
 	results, err := h.client.Search(ctx, provider.SearchRequest{
 		Query: params.Query,
-		Limit: h.pageSize,
+		Limit: params.Limit,
 	})
 	if err != nil {
 		fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
@@ -149,13 +165,51 @@ func EncryptMagnetURLs(results []model.SearchResult, encryptor StringEncryptor) 
 
 type searchParams struct {
 	Query string
+	Limit int
 }
 
-func parseSearchQuery(r *http.Request) searchParams {
+func (h *Handler) parseSearchQuery(w http.ResponseWriter, r *http.Request, requestID string) (searchParams, bool) {
 	query := r.URL.Query()
-	return searchParams{
+	params := searchParams{
 		Query: strings.TrimSpace(query.Get("q")),
+		Limit: h.defaultLimit,
 	}
+
+	fields := logging.HTTPRequestFields(r, requestID)
+	fields["query"] = params.Query
+
+	if params.Query == "" {
+		logrus.WithFields(fields).Warn("search request rejected: missing q")
+		writeError(w, http.StatusBadRequest, "bad_request", "q is required")
+		return searchParams{}, false
+	}
+	queryLength := utf8.RuneCountInString(params.Query)
+	if queryLength > MaxSearchQueryLength {
+		fields["query_length"] = queryLength
+		logrus.WithFields(fields).Warn("search request rejected: q too long")
+		writeError(w, http.StatusBadRequest, "bad_request", "q is too long")
+		return searchParams{}, false
+	}
+
+	rawLimit := strings.TrimSpace(query.Get("limit"))
+	if rawLimit == "" {
+		return params, true
+	}
+	limit, err := strconv.Atoi(rawLimit)
+	if err != nil {
+		fields["limit"] = rawLimit
+		logrus.WithFields(fields).Warn("search request rejected: invalid limit")
+		writeError(w, http.StatusBadRequest, "bad_request", "limit must be an integer")
+		return searchParams{}, false
+	}
+	if limit < 1 || limit > MaxSearchLimit {
+		fields["limit"] = limit
+		logrus.WithFields(fields).Warn("search request rejected: limit out of range")
+		writeError(w, http.StatusBadRequest, "bad_request", "limit must be between 1 and 200")
+		return searchParams{}, false
+	}
+	params.Limit = limit
+	return params, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

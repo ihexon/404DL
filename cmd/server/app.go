@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
+
+	searchapi "mvdl/internal/server"
 )
 
 func newApp() *cli.App {
@@ -36,10 +38,10 @@ func serverFlags() []cli.Flag {
 			EnvVars: []string{envAddr},
 		},
 		&cli.IntFlag{
-			Name:    FlagPageSize,
-			Usage:   "return page size, default 50",
-			Value:   50,
-			EnvVars: []string{envPageSize},
+			Name:    FlagLimitSize,
+			Usage:   "maximum returned results, default 50",
+			Value:   searchapi.DefaultSearchLimit,
+			EnvVars: []string{envLimitSize},
 		},
 		&cli.DurationFlag{
 			Name:    FlagTimeout,
@@ -62,9 +64,9 @@ func newSearchCommand() *cli.Command {
 				Value: 8 * time.Second,
 			},
 			&cli.IntFlag{
-				Name:  FlagPageSize,
-				Usage: "return page size, default 50",
-				Value: 50,
+				Name:  FlagLimitSize,
+				Usage: "maximum returned results, default 50",
+				Value: searchapi.DefaultSearchLimit,
 			},
 			&cli.StringSliceFlag{
 				Name:  FlagProvider,

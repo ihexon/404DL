@@ -3,7 +3,7 @@ package main
 const (
 	envCryptoKey          = "MVDL_CRYKEY"
 	envAddr               = "ADDR"
-	envPageSize           = "PAGE_SIZE"
+	envLimitSize          = "LIMIT_SIZE"
 	envUpstreamTimeout    = "UPSTREAM_TIMEOUT"
 	envKnabenAPIURL       = "KNABEN_API_URL"
 	envTorrentClawAPIKey  = "TORRENTCLAW_API_KEY"
@@ -11,7 +11,7 @@ const (
 	defaultKnabenAPIURL   = "https://api.knaben.org/v1"
 	defaultTorrentClawURL = "https://torrentclaw.com/api/v1"
 
-	FlagPageSize      = "page-size"
+	FlagLimitSize     = "limit-size"
 	FlagListen        = "listen"
 	FlagProvider      = "provider"
 	FlagTimeout       = "timeout"
