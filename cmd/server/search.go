@@ -14,7 +14,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
+	"4dl/internal/crypto"
 	"4dl/internal/logging"
+	"4dl/internal/responsecodec"
 )
 
 func runSearch(c *cli.Context) error {
@@ -31,6 +33,10 @@ func runSearch(c *cli.Context) error {
 	}
 	defer endpoint.Close()
 	client := &http.Client{Timeout: searchAPIRequestTimeout(c.Duration(FlagTimeout), endpoint.Embedded)}
+	decryptor, requireEncrypted, err := newResponseDecryptor()
+	if err != nil {
+		return err
+	}
 
 	requestURL, err := searchAPIURL(endpoint.URL, searchQuery, c.Int(FlagLimitSize), providerFilter)
 	if err != nil {
@@ -39,13 +45,14 @@ func runSearch(c *cli.Context) error {
 
 	requestID := logging.NewRequestID()
 	logrus.WithFields(logrus.Fields{
-		"request_id":      requestID,
-		"query":           searchQuery,
-		"provider_filter": providerFilterLogValue(providerFilter),
-		"limit":           c.Int(FlagLimitSize),
-		"server_url":      endpoint.URL,
-		"embedded_server": endpoint.Embedded,
-		"timeout":         client.Timeout.String(),
+		"request_id":                 requestID,
+		"query":                      searchQuery,
+		"provider_filter":            providerFilterLogValue(providerFilter),
+		"limit":                      c.Int(FlagLimitSize),
+		"server_url":                 endpoint.URL,
+		"embedded_server":            endpoint.Embedded,
+		"require_encrypted_response": requireEncrypted,
+		"timeout":                    client.Timeout.String(),
 	}).Info("search API request started")
 
 	httpReq, err := http.NewRequestWithContext(c.Context, http.MethodGet, requestURL, nil)
@@ -54,6 +61,9 @@ func runSearch(c *cli.Context) error {
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set(logging.RequestIDHeader, requestID)
+	if requireEncrypted {
+		responsecodec.RequireEncryptedResponse(httpReq)
+	}
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -67,9 +77,13 @@ func runSearch(c *cli.Context) error {
 	}
 	defer resp.Body.Close()
 
+	body, encrypted, err := readSearchAPIResponse(resp, decryptor, requireEncrypted)
+	if err != nil {
+		return err
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		message := strings.TrimSpace(string(body))
+		message := strings.TrimSpace(string(limitMessageBody(body, 4096)))
 		if message == "" {
 			message = resp.Status
 		}
@@ -83,20 +97,52 @@ func runSearch(c *cli.Context) error {
 		return fmt.Errorf("search API returned HTTP %d: %s", resp.StatusCode, message)
 	}
 
-	written, err := io.Copy(os.Stdout, resp.Body)
+	written, err := os.Stdout.Write(body)
 	if err != nil {
 		return fmt.Errorf("write search API response: %w", err)
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"request_id":      requestID,
-		"query":           searchQuery,
-		"provider_filter": providerFilterLogValue(providerFilter),
-		"bytes":           written,
-		"duration_ms":     logging.DurationMillis(time.Since(startedAt)),
+		"request_id":         requestID,
+		"query":              searchQuery,
+		"provider_filter":    providerFilterLogValue(providerFilter),
+		"response_encrypted": encrypted,
+		"bytes":              written,
+		"duration_ms":        logging.DurationMillis(time.Since(startedAt)),
 	}).Info("search API request completed")
 
 	return nil
+}
+
+func newResponseDecryptor() (*crypto.StringEncryptor, bool, error) {
+	key := secretEnvString("", envCryptoKey)
+	if key == "" {
+		return nil, false, nil
+	}
+	decryptor, err := crypto.NewStringEncryptor(key)
+	if err != nil {
+		return nil, true, fmt.Errorf("invalid %s: %w", envCryptoKey, err)
+	}
+	return decryptor, true, nil
+}
+
+func readSearchAPIResponse(resp *http.Response, decryptor *crypto.StringEncryptor, requireEncrypted bool) ([]byte, bool, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("read search API response: %w", err)
+	}
+	decoded, encrypted, err := responsecodec.DecodeHTTPBody(body, resp.Header, decryptor, requireEncrypted)
+	if err != nil {
+		return nil, encrypted, fmt.Errorf("decode search API response: %w", err)
+	}
+	return decoded, encrypted, nil
+}
+
+func limitMessageBody(body []byte, limit int) []byte {
+	if len(body) <= limit {
+		return body
+	}
+	return body[:limit]
 }
 
 type searchAPIEndpointConfig struct {
