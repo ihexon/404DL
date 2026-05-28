@@ -12,6 +12,7 @@ import (
 
 	"mvdl/internal/logging"
 	"mvdl/internal/provider"
+	"mvdl/internal/server"
 )
 
 func runSearch(c *cli.Context) error {
@@ -59,6 +60,23 @@ func runSearch(c *cli.Context) error {
 		"count":       len(hits),
 		"duration_ms": logging.DurationMillis(time.Since(startedAt)),
 	}).Info("search request completed")
+
+	encryptor, encryptMagnets, err := newOptionalMagnetEncryptor()
+	if err != nil {
+		return err
+	}
+	if encryptMagnets {
+		encrypted, encryptedCount, err := server.EncryptMagnets(hits, encryptor)
+		if err != nil {
+			return fmt.Errorf("encrypt magnetUrl: %w", err)
+		}
+		hits = encrypted
+		logrus.WithFields(logrus.Fields{
+			"request_id":        requestID,
+			"encrypted_magnets": encryptedCount,
+			"magnet_encryption": true,
+		}).Info("query magnet URLs encrypted")
+	}
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(false)
