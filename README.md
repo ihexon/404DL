@@ -103,6 +103,58 @@ The CLI can also call an existing API server explicitly:
 ./bin/4dl search --server-url http://127.0.0.1:6567 "linux interface"
 ```
 
+### Encrypted Search API Responses
+
+`FOURDL_CRYKEY` is a 32-byte AES-256-GCM key for encrypting complete Search API
+response bodies. It does not encrypt individual `magnetUrl` fields.
+
+Server behavior:
+
+```bash
+FOURDL_CRYKEY=12345678901234567890123456789012 ./bin/4dl server
+```
+
+When the server has `FOURDL_CRYKEY`, it can return encrypted `/v1/search`
+responses. Encryption is used only when the client asks for it with
+`X-4DL-Require-Encrypted: true`. If the client requires encryption but the
+server has no key, the server returns HTTP 412.
+
+`search` behavior:
+
+```bash
+FOURDL_CRYKEY=12345678901234567890123456789012 \
+  ./bin/4dl search --server-url http://127.0.0.1:6567 "linux interface"
+```
+
+When `search` has `FOURDL_CRYKEY`, it requires an encrypted API response,
+decrypts it locally, and prints normal JSON. When `search` has no key, it does
+not request encryption and expects normal JSON.
+
+`get` behavior:
+
+```bash
+FOURDL_CRYKEY=12345678901234567890123456789012 \
+  ./bin/4dl get --input encrypted-results.txt --save-to ./downloads
+```
+
+When `get` has `FOURDL_CRYKEY`, it decrypts its whole input first, then reads
+JSON. When `get` has no key, it reads plaintext JSON directly.
+
+For the normal pipeline, let `search` decrypt the API response and pass plaintext
+JSON to `get`:
+
+```bash
+FOURDL_CRYKEY=12345678901234567890123456789012 \
+  ./bin/4dl search "linux interface" | ./bin/4dl get --stdin --save-to ./downloads
+```
+
+If `FOURDL_CRYKEY` is exported in your shell, unset it for `get` when feeding it
+the plaintext output of `search`:
+
+```bash
+./bin/4dl search "linux interface" | env -u FOURDL_CRYKEY ./bin/4dl get --stdin --save-to ./downloads
+```
+
 ## Configuration
 
 Common options:
@@ -122,10 +174,8 @@ FOURDL_CRYKEY=
 
 `TORRENTCLAW_API_KEY` is used when TorrentClaw requires an API key.
 
-`FOURDL_CRYKEY` enables AES-256-GCM encryption for Search API response bodies.
-When `search` has this key locally, it requests an encrypted response and
-refuses plaintext responses. When `get` has this key locally, it decrypts its
-search-result input before reading JSON. It must be exactly 32 bytes.
+`FOURDL_CRYKEY` enables AES-256-GCM encryption for whole Search API response
+bodies. It must be exactly 32 bytes.
 
 ## Docker
 
