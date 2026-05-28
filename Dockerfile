@@ -2,11 +2,13 @@ FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
-COPY go.mod ./
+RUN apk add --no-cache make npm
+
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/4dl ./cmd/server
+RUN make build BUILD_DIR=/out BINARY=4dl CGO_ENABLED=0 GOOS=linux
 
 FROM alpine:3.22
 

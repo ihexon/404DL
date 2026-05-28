@@ -1,8 +1,11 @@
 .git
+.github
 .gitignore
 Dockerfile
 README.md
 tmp
 dist
 bin
+node_modules
+web/get/node_modules
 *.log
