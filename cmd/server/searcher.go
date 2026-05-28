@@ -9,7 +9,6 @@ import (
 
 	"mvdl/internal/knaben"
 	"mvdl/internal/provider"
-	"mvdl/internal/search"
 	"mvdl/internal/torrentclaw"
 )
 
@@ -37,7 +36,7 @@ var providerFactories = []providerFactory{
 	},
 }
 
-func newTorrentSearcher(client *http.Client, providerNames ...string) (*search.Service, error) {
+func newTorrentSearcher(client *http.Client, providerNames ...string) (*provider.Aggregator, error) {
 	providers, err := newSearchProviders(client, providerNames...)
 	if err != nil {
 		return nil, err
@@ -47,8 +46,7 @@ func newTorrentSearcher(client *http.Client, providerNames ...string) (*search.S
 		"providers": providerNamesFromInstances(providers),
 		"timeout":   clientTimeoutString(client),
 	}).Info("torrent searcher configured")
-	aggregator := provider.NewAggregator(providers...)
-	return search.NewService(aggregator), nil
+	return provider.NewAggregator(providers...), nil
 }
 
 func newSearchProviders(client *http.Client, providerNames ...string) ([]provider.Provider, error) {

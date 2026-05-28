@@ -154,6 +154,7 @@ type RuntimeTorrentEvent = {
 };
 
 type TorrentAction = "start" | "pause" | "delete";
+type DownloadFilter = "all" | "downloading" | "complete";
 
 class HTTPError extends Error {
   readonly status: number;
@@ -178,8 +179,9 @@ function App() {
   const { items, error, inFlightCommands, loadTorrent, runTorrentAction } = useTorrents();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("");
+  const [downloadFilter, setDownloadFilter] = useState<DownloadFilter>("all");
 
-  const visibleItems = useMemo(() => filterTorrents(items, filter), [items, filter]);
+  const visibleItems = useMemo(() => filterTorrents(items, filter, downloadFilter), [items, filter, downloadFilter]);
 
   function toggle(item: TorrentState) {
     const willOpen = !expanded[item.id];
@@ -205,6 +207,11 @@ function App() {
             placeholder="Filter"
           />
         </label>
+        <div className="filterTabs" aria-label="Download status filter">
+          <FilterTab current={downloadFilter} onChange={setDownloadFilter} value="all">All</FilterTab>
+          <FilterTab current={downloadFilter} onChange={setDownloadFilter} value="downloading">Downloading</FilterTab>
+          <FilterTab current={downloadFilter} onChange={setDownloadFilter} value="complete">Complete</FilterTab>
+        </div>
       </header>
 
       {error && <div className="banner">{error}</div>}
@@ -406,7 +413,7 @@ const TorrentCard = React.memo(function TorrentCard({
           </div>
         </div>
 
-        <DownloadStatus downloading={item.downloading} />
+        <DownloadStatus status={item.download.status} />
 
         <div className="torrentActions" onClick={(event) => event.stopPropagation()}>
           <TorrentActionButton
@@ -892,14 +899,44 @@ function CodeBlock({
   );
 }
 
-function DownloadStatus({ downloading }: { downloading: boolean }) {
-  if (!downloading) {
+function FilterTab({
+  children,
+  current,
+  onChange,
+  value
+}: {
+  children: React.ReactNode;
+  current: DownloadFilter;
+  onChange: (value: DownloadFilter) => void;
+  value: DownloadFilter;
+}) {
+  return (
+    <button
+      className={`filterTab ${current === value ? "active" : ""}`}
+      onClick={() => onChange(value)}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+function DownloadStatus({ status }: { status: TorrentDownloadStatus }) {
+  if (status === "downloading") {
+    return (
+      <span className="status downloading">
+        <span className="spinner" aria-hidden="true" />
+        Downloading
+      </span>
+    );
+  }
+  if (status !== "complete") {
     return null;
   }
   return (
-    <span className="status downloading">
-      <span className="spinner" aria-hidden="true" />
-      Downloading
+    <span className="status complete">
+      <Check size={14} />
+      Complete
     </span>
   );
 }
@@ -1056,20 +1093,23 @@ function CopyButton({
   );
 }
 
-function filterTorrents(items: TorrentState[], filter: string): TorrentState[] {
+function filterTorrents(items: TorrentState[], filter: string, downloadFilter: DownloadFilter): TorrentState[] {
   const needle = filter.trim().toLowerCase();
-  if (!needle) {
-    return items;
-  }
-  return items.filter((item) =>
-    [
+  return items.filter((item) => {
+    if (downloadFilter !== "all" && item.download.status !== downloadFilter) {
+      return false;
+    }
+    if (!needle) {
+      return true;
+    }
+    return [
       item.title,
       item.provider,
       item.hash ?? "",
       item.magnetUrl ?? "",
       item.category ?? ""
-    ].some((value) => value.toLowerCase().includes(needle))
-  );
+    ].some((value) => value.toLowerCase().includes(needle));
+  });
 }
 
 function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): TorrentState {

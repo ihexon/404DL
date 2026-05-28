@@ -49,9 +49,8 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("init static fs: %w", err)
 	}
 	server := &Server{
-		manager:    manager,
-		staticFS:   staticFS,
-		fileServer: http.FileServer(http.FS(staticFS)),
+		manager:  manager,
+		staticFS: staticFS,
 	}
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -88,9 +87,8 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 type Server struct {
-	manager    *Manager
-	staticFS   fs.FS
-	fileServer http.Handler
+	manager  *Manager
+	staticFS fs.FS
 }
 
 func (s *Server) routes() http.Handler {
@@ -127,9 +125,9 @@ func (s *Server) handleGetTorrent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Error("get torrent stream failed: response writer cannot flush")
+	rc := http.NewResponseController(w)
+	if err := rc.Flush(); err != nil {
+		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Error("get torrent stream failed: response writer cannot flush")
 		writeJSON(w, http.StatusInternalServerError, APIError{Error: "streaming unsupported"})
 		return
 	}
@@ -151,7 +149,7 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request) {
 		"id": id,
 	})).Debug("get torrent stream closed")
 
-	if !s.writeTorrentEvent(w, flusher, r, id) {
+	if !s.writeTorrentEvent(w, rc, r, id) {
 		return
 	}
 
@@ -162,27 +160,27 @@ func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			if !s.writeTorrentEvent(w, flusher, r, id) {
+			if !s.writeTorrentEvent(w, rc, r, id) {
 				return
 			}
 		}
 	}
 }
 
-func (s *Server) writeTorrentEvent(w http.ResponseWriter, flusher http.Flusher, r *http.Request, id string) bool {
+func (s *Server) writeTorrentEvent(w http.ResponseWriter, rc *http.ResponseController, r *http.Request, id string) bool {
 	state, ok := s.manager.TorrentState(id)
 	if !ok {
 		if err := writeSSE(w, "error", APIError{Error: "torrent not found"}); err != nil {
 			logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{"id": id})).Warn("get torrent stream write failed")
 		}
-		flusher.Flush()
+		_ = rc.Flush()
 		return false
 	}
 	if err := writeSSE(w, "torrent", state); err != nil {
 		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{"id": id})).Warn("get torrent stream write failed")
 		return false
 	}
-	flusher.Flush()
+	_ = rc.Flush()
 	return true
 }
 
@@ -251,24 +249,34 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, APIError{Error: "api endpoint not found"})
 		return
 	}
-	staticPath := strings.TrimPrefix(r.URL.Path, "/")
-	if staticPath == "" {
-		staticPath = "index.html"
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if name == "" {
+		name = "index.html"
 	}
-	if _, err := fs.Stat(s.staticFS, staticPath); err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		r.URL.Path = "/index.html"
-		staticPath = "index.html"
-	}
-	if strings.HasPrefix(staticPath, "assets/") {
+	if strings.HasPrefix(name, "assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFileFS(w, r, s.staticFS, name)
+		return
 	}
-	s.fileServer.ServeHTTP(w, r)
+	w.Header().Set("Cache-Control", "no-cache")
+	if _, err := fs.Stat(s.staticFS, name); err == nil {
+		serveStaticName(w, r, s.staticFS, name)
+		return
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	serveStaticName(w, r, s.staticFS, "index.html")
+}
+
+func serveStaticName(w http.ResponseWriter, r *http.Request, filesystem fs.FS, name string) {
+	if name != "index.html" {
+		http.ServeFileFS(w, r, filesystem, name)
+		return
+	}
+	indexRequest := r.Clone(r.Context())
+	indexRequest.URL.Path = "/"
+	http.ServeFileFS(w, indexRequest, filesystem, "index.html")
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -284,13 +292,8 @@ func writeSSE(w http.ResponseWriter, event string, value any) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-		return err
-	}
-	return nil
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+	return err
 }
 
 type responseRecorder struct {
@@ -324,9 +327,8 @@ func (r *responseRecorder) Flush() {
 	if r.status == 0 {
 		r.status = http.StatusOK
 	}
-	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
+	rc := http.NewResponseController(r.ResponseWriter)
+	_ = rc.Flush()
 }
 
 func requestLogger(next http.Handler) http.Handler {
