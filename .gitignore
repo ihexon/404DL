@@ -16,6 +16,7 @@ go.work
 
 # Build output
 bin/
+dist/
 
 # Local downloads/runtime data
 4dl-downloads/

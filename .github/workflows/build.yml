@@ -1,0 +1,187 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    name: Docker Linux x86_64
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build image
+        run: docker build --pull --tag mvdl:${{ github.sha }} .
+
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+            binary: 4dl
+            c_compiler: cc
+            cxx_compiler: c++
+            release_name: 4dl-linux-amd64
+            artifact: 4dl-linux-amd64.tar.gz
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            binary: 4dl
+            c_compiler: cc
+            cxx_compiler: c++
+            release_name: 4dl-linux-arm64
+            artifact: 4dl-linux-arm64.tar.gz
+          - name: macos-x86_64
+            runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            binary: 4dl
+            c_compiler: cc
+            cxx_compiler: c++
+            release_name: 4dl-darwin-amd64
+            artifact: 4dl-darwin-amd64.tar.gz
+          - name: macos-arm64
+            runner: macos-15
+            goos: darwin
+            goarch: arm64
+            binary: 4dl
+            c_compiler: cc
+            cxx_compiler: c++
+            release_name: 4dl-darwin-arm64
+            artifact: 4dl-darwin-arm64.tar.gz
+          - name: windows-x86_64
+            runner: windows-2025
+            goos: windows
+            goarch: amd64
+            binary: 4dl.exe
+            msystem: MINGW64
+            c_compiler: gcc
+            cxx_compiler: g++
+            release_name: 4dl-windows-amd64
+            artifact: 4dl-windows-amd64.zip
+          - name: windows-arm64
+            runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+            binary: 4dl.exe
+            msystem: CLANGARM64
+            c_compiler: clang
+            cxx_compiler: clang++
+            release_name: 4dl-windows-arm64
+            artifact: 4dl-windows-arm64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/get/package-lock.json
+
+      - name: Install Linux build tools
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Set up MSYS2
+        if: matrix.goos == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          path-type: inherit
+          install: >-
+            base-devel
+            zip
+          pacboy: toolchain:p
+
+      - name: Verify native runner
+        shell: bash
+        run: |
+          test "$(go env GOHOSTOS)" = "${{ matrix.goos }}"
+          test "$(go env GOHOSTARCH)" = "${{ matrix.goarch }}"
+
+      - name: Build release package
+        if: matrix.goos != 'windows'
+        shell: bash
+        run: |
+          make release-package \
+            BINARY="${{ matrix.binary }}" \
+            BUILD_DIR=bin \
+            DIST_DIR=dist \
+            GOOS="${{ matrix.goos }}" \
+            GOARCH="${{ matrix.goarch }}" \
+            CGO_ENABLED=1 \
+            CC="${{ matrix.c_compiler }}" \
+            CXX="${{ matrix.cxx_compiler }}" \
+            RELEASE_NAME="${{ matrix.release_name }}"
+
+      - name: Build release package
+        if: matrix.goos == 'windows'
+        shell: msys2 {0}
+        run: |
+          make release-package \
+            BINARY="${{ matrix.binary }}" \
+            BUILD_DIR=bin \
+            DIST_DIR=dist \
+            GOOS="${{ matrix.goos }}" \
+            GOARCH="${{ matrix.goarch }}" \
+            CGO_ENABLED=1 \
+            CC="${{ matrix.c_compiler }}" \
+            CXX="${{ matrix.cxx_compiler }}" \
+            RELEASE_NAME="${{ matrix.release_name }}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+    needs:
+      - docker-build
+      - package
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --generate-notes
