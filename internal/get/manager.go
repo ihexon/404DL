@@ -206,9 +206,13 @@ func (m *Manager) State(ctx context.Context) AppState {
 	}
 	for _, item := range items {
 		item.Files = nil
+		runtime := RuntimeView{Status: RuntimeStatusInactive}
+		if item.Downloading || item.Download.Status == TorrentDownloadStatusDownloading {
+			runtime = m.runtimeView(item.ID)
+		}
 		state.Torrents = append(state.Torrents, TorrentState{
 			TorrentItem: item,
-			Runtime:     RuntimeView{Status: RuntimeStatusInactive},
+			Runtime:     runtime,
 		})
 	}
 	return state

@@ -94,6 +94,7 @@ type RuntimeSummary = {
   metadataReady: boolean;
   bytesCompleted: number;
   length: number;
+  downloadRate: number;
   pendingPeers: number;
   activePeers: number;
   connectedSeeders: number;
@@ -168,7 +169,6 @@ class HTTPError extends Error {
   }
 }
 
-const pollIntervalMs = 1000;
 const pieceCellSize = 11;
 const pieceCellGap = 3;
 const pieceGridHeight = 260;
@@ -239,6 +239,12 @@ function useTorrents(): TorrentStore {
     detailsRef.current = detailsByID;
   }, [detailsByID]);
 
+  const mergeAppState = useCallback((next: AppState) => {
+    const details = detailsRef.current;
+    next.torrents = next.torrents.map((item) => mergeListTorrent(item, details.get(item.id)));
+    setState(next);
+  }, []);
+
   const mergeTorrent = useCallback((next: TorrentState) => {
     setDetailsByID((current) => {
       const updated = new Map(current);
@@ -254,14 +260,6 @@ function useTorrents(): TorrentStore {
         torrents: current.torrents.map((item) => item.id === next.id ? next : item)
       };
     });
-  }, []);
-
-  const refreshList = useCallback(async () => {
-    const next = await getJSON<AppState>(torrentListEndpoint());
-    const details = detailsRef.current;
-    next.torrents = next.torrents.map((item) => mergeListTorrent(item, details.get(item.id)));
-    setState(next);
-    return next;
   }, []);
 
   const loadTorrent = useCallback(
@@ -297,45 +295,13 @@ function useTorrents(): TorrentStore {
   );
 
   useEffect(() => {
-    void refreshList()
-      .catch((err) => setError(serviceErrorMessage(err)));
-  }, [refreshList]);
-
-  useEffect(() => {
-    const activeItems = Array.from(detailsByID.values()).filter(
-      (item) => item.downloading || item.download.status === "downloading"
-    );
-    if (activeItems.length === 0) {
-      return;
-    }
-    const sources = activeItems.map((item) => {
-      const source = new EventSource(torrentStreamEndpoint(item.id));
-      source.addEventListener("open", () => setError(""));
-      source.addEventListener("torrent", (event) => {
-        mergeTorrent(JSON.parse(event.data) as TorrentState);
-      });
-      source.addEventListener("error", () => {
-        if (!document.hidden) {
-          void loadTorrent(item.id).catch(showServiceError);
-        }
-      });
-      return source;
+    const source = new EventSource(torrentListStreamEndpoint());
+    source.addEventListener("open", () => setError(""));
+    source.addEventListener("state", (event) => {
+      mergeAppState(JSON.parse(event.data) as AppState);
     });
-    const interval = window.setInterval(() => {
-      if (document.hidden) {
-        return;
-      }
-      for (const item of activeItems) {
-        void loadTorrent(item.id).catch(showServiceError);
-      }
-    }, pollIntervalMs);
-    return () => {
-      for (const source of sources) {
-        source.close();
-      }
-      window.clearInterval(interval);
-    };
-  }, [detailsByID, loadTorrent, mergeTorrent, showServiceError]);
+    return () => source.close();
+  }, [mergeAppState]);
 
   return {
     items: state?.torrents ?? [],
@@ -603,9 +569,8 @@ function RuntimePanel({ runtime }: { runtime: RuntimeView }) {
 function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
   const completed = summary.bytesCompleted;
   const total = summary.length || completed;
-  const percent = total > 0 ? (completed / total) * 100 : 0;
   const progress = summary.metadataReady
-    ? `${formatPercent(percent)} (${formatBytes(completed)})`
+    ? `${formatBytes(completed)} / ${formatBytes(total)}`
     : "-";
   const pieces = summary.metadataReady
     ? `${summary.piecesComplete}/${summary.numPieces}`
@@ -614,6 +579,7 @@ function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
   return (
     <div className="runtimeStats">
       <DetailItem label="Progress" value={progress} />
+      <DetailItem label="Download speed" value={formatRate(summary.downloadRate)} />
       <DetailItem label="Active peers" value={`${summary.activePeers}`} />
       <DetailItem label="Pending / Half-open" value={`${summary.pendingPeers}/${summary.halfOpenPeers}`} />
       <DetailItem label="Seeders" value={`${summary.connectedSeeders}`} />
@@ -827,7 +793,7 @@ function RuntimePeers({ runtime }: { runtime: RuntimeView }) {
               <span className="monoText">{peer.address}</span>
               <span>{peer.connected ? peer.network || "peer" : "known"}</span>
               <span>{peerSourceLabel(peer.source)}</span>
-              <span>{formatBytes(peer.downloadRate)}/s</span>
+              <span>{formatRate(peer.downloadRate)}</span>
               <span>{peer.client || "-"}</span>
             </div>
           ))}
@@ -1113,7 +1079,14 @@ function filterTorrents(items: TorrentState[], filter: string, downloadFilter: D
 }
 
 function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): TorrentState {
-  return detailItem && detailItem.downloading === listItem.downloading ? detailItem : listItem;
+  if (!detailItem || detailItem.downloading !== listItem.downloading) {
+    return listItem;
+  }
+  return {
+    ...listItem,
+    files: detailItem.files,
+    runtime: listItem.runtime.status === "inactive" ? detailItem.runtime : listItem.runtime
+  };
 }
 
 function torrentActionKey(id: string, action: TorrentAction): string {
@@ -1149,12 +1122,12 @@ function torrentListEndpoint(): string {
   return "/api/torrents";
 }
 
-function torrentEndpoint(id: string): string {
-  return `/api/torrents/${encodeURIComponent(id)}`;
+function torrentListStreamEndpoint(): string {
+  return `${torrentListEndpoint()}/stream`;
 }
 
-function torrentStreamEndpoint(id: string): string {
-  return `${torrentEndpoint(id)}/stream`;
+function torrentEndpoint(id: string): string {
+  return `/api/torrents/${encodeURIComponent(id)}`;
 }
 
 function torrentActionEndpoint(id: string, action: TorrentAction): string {
@@ -1255,6 +1228,14 @@ function formatBytes(value?: number): string {
     unit++;
   }
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatRate(value?: number): string {
+  if (value === 0) {
+    return "0 B/s";
+  }
+  const bytes = formatBytes(value);
+  return bytes === "-" ? "-" : `${bytes}/s`;
 }
 
 function peerSourceLabel(value: string): string {
