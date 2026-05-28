@@ -150,10 +150,10 @@ MVDL_CRYKEY=
 `TORRENTCLAW_API_KEY` is sent as `Authorization: Bearer <key>` when configured.
 TorrentClaw may require an API key for magnet links.
 
-`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server`, non-empty
-`magnetUrl` values are encrypted with AES-256-GCM before being returned. When it
-is set for `get`, encrypted magnet values from saved API results are
-decrypted before metadata loading.
+`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server` or `query`,
+non-empty `magnetUrl` values are encrypted with AES-256-GCM before being
+returned. When it is set for `get`, encrypted magnet values from saved API
+results are decrypted before metadata loading.
 
 get flags:
 

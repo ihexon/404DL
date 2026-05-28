@@ -108,7 +108,7 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 	}
 	encryptMagnetURL := h.magnetEncryptor != nil
 	if encryptMagnetURL {
-		encrypted, encryptedCount, err := h.encryptMagnets(hits)
+		encrypted, encryptedCount, err := EncryptMagnets(hits, h.magnetEncryptor)
 		if err != nil {
 			fields["duration_ms"] = logging.DurationMillis(time.Since(startedAt))
 			logrus.WithError(err).WithFields(fields).Error("torrent magnet encryption failed")
@@ -127,7 +127,7 @@ func (h *Handler) searchTorrents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hits)
 }
 
-func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, int, error) {
+func EncryptMagnets(hits []model.Torrent, encryptor StringEncryptor) ([]model.Torrent, int, error) {
 	encrypted := make([]model.Torrent, len(hits))
 	copy(encrypted, hits)
 
@@ -136,7 +136,7 @@ func (h *Handler) encryptMagnets(hits []model.Torrent) ([]model.Torrent, int, er
 		if encrypted[i].MagnetURL == nil || *encrypted[i].MagnetURL == "" {
 			continue
 		}
-		value, err := h.magnetEncryptor.EncryptString(*encrypted[i].MagnetURL)
+		value, err := encryptor.EncryptString(*encrypted[i].MagnetURL)
 		if err != nil {
 			return nil, count, err
 		}

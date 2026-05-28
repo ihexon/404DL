@@ -65,18 +65,25 @@ func newServerConfig(c *cli.Context) (server.Config, error) {
 }
 
 func newMagnetEncryptor() (server.StringEncryptor, error) {
-	key := envString(envCryptoKey, "")
-	if key == "" {
+	encryptor, enabled, err := newOptionalMagnetEncryptor()
+	if !enabled {
 		logrus.Warnf("magnetUrl encryption disabled: environment var %s is not set", envCryptoKey)
 		return nil, nil
 	}
+	return encryptor, err
+}
 
+func newOptionalMagnetEncryptor() (server.StringEncryptor, bool, error) {
+	key := envString(envCryptoKey, "")
+	if key == "" {
+		return nil, false, nil
+	}
 	encryptor, err := crypto.NewStringEncryptor(key)
 	if err != nil {
-		return nil, fmt.Errorf("invalid magnetUrl encryption key: %w", err)
+		return nil, true, fmt.Errorf("invalid magnetUrl encryption key: %w", err)
 	}
 	logrus.WithField("key_length", len(key)).Info("magnetUrl encryption enabled")
-	return encryptor, nil
+	return encryptor, true, nil
 }
 
 func envString(name, fallback string) string {
