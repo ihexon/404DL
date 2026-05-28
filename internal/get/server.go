@@ -14,7 +14,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"mvdl/internal/logging"
+	"4dl/internal/logging"
 )
 
 const (

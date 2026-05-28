@@ -196,7 +196,7 @@ function App() {
     <main className="shell">
       <header className="topbar">
         <div>
-          <h1>mvdl get</h1>
+          <h1>4dl get</h1>
           <div className="meta">{items.length} torrents</div>
         </div>
         <label className="searchBox">

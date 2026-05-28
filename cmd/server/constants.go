@@ -1,7 +1,7 @@
 package main
 
 const (
-	envCryptoKey          = "MVDL_CRYKEY"
+	envCryptoKey          = "FOURDL_CRYKEY"
 	envTorrentClawAPIKey  = "TORRENTCLAW_API_KEY"
 	defaultKnabenAPIURL   = "https://api.knaben.org/v1"
 	defaultTorrentClawURL = "https://torrentclaw.com/api/v1"

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := build
 
-BINARY ?= mvdl
+BINARY ?= 4dl
 BUILD_DIR ?= bin
 CMD ?= ./cmd/server
 GO ?= go

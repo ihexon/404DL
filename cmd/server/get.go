@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	downloadui "mvdl/internal/get"
+	downloadui "4dl/internal/get"
 )
 
 func runGet(c *cli.Context) error {
@@ -30,7 +30,7 @@ func runGet(c *cli.Context) error {
 		InputPath:         inputPath,
 		SaveTo:            saveTo,
 		TorrentListenAddr: c.String(FlagTorrentListen),
-		CryptoKey:         secretEnvString(envCryptoKey, ""),
+		CryptoKey:         secretEnvString("", envCryptoKey),
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -64,12 +64,9 @@ func getInputPath(c *cli.Context) (string, bool, error) {
 }
 
 func getSaveTo(value string) (string, error) {
-	if value != "" {
-		return value, nil
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("--%s is required", FlagSaveTo)
 	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve current directory: %w", err)
-	}
-	return filepath.Join(wd, "mvdl-downloads"), nil
+	return value, nil
 }

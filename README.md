@@ -1,192 +1,146 @@
-# mvdl
+# 404 Downloader
 
-mvdl is a Go file search and download utility with a local web UI for selected
-search results.
+404 Downloader is a local file search and download tool.
 
-It has two main workflows:
+It helps you search files from supported providers, review the results, and pass
+selected results into a local browser UI for downloading. The project is built
+around a small CLI named `4dl`, with an optional HTTP API mode for automation or
+interactive API exploration.
 
-- `server` exposes a small JSON file search API.
-- `search | get` turns provider search results into a local web UI that can
-  load torrent metadata, download files through BitTorrent, and show live
-  runtime diagnostics.
+## What It Does
 
-## Search API
+- Searches files from multiple providers.
+- Returns structured search results that can be piped into other commands.
+- Opens a local web UI for managing selected downloads.
+- Supports provider filtering when you want to narrow a search.
+- Can run as a lightweight local Search API server.
 
-Start the API server:
+## Quick Start
+
+Build the CLI:
 
 ```bash
-go run ./cmd/server server
+make build
 ```
 
-Open the interactive OpenAPI documentation:
-
-```text
-GET /docs
-GET /openapi.json
-```
+The binary is written to `./bin/4dl`.
 
 Search files:
 
-```text
-GET /v1/search?q={search query}&limit={max results}&provider={provider}
+```bash
+./bin/4dl search "linux interface"
 ```
+
+Limit returned results:
+
+```bash
+./bin/4dl search --limit-size 3 "linux interface"
+```
+
+Search only selected providers:
+
+```bash
+./bin/4dl search --provider knaben --provider torrentclaw "linux interface"
+```
+
+Send search results into the download UI:
+
+```bash
+./bin/4dl search "linux interface" | ./bin/4dl get --stdin --save-to ./downloads
+```
+
+Use saved search results:
+
+```bash
+./bin/4dl get --input results.json --save-to ./downloads
+```
+
+By default, `search` runs independently. It starts an embedded Search API server
+for the current command, queries all providers, prints JSON, and exits.
+
+## Local Web UI
+
+The `get` command opens a local web UI for selected search results. From there
+you can review items, start or pause downloads, delete downloaded data, and
+inspect download progress.
 
 Example:
 
 ```bash
-curl --noproxy '*' 'http://127.0.0.1:6567/v1/search?q=mortal%20kombat%20ii%202160p&limit=3'
+./bin/4dl search "linux interface" | ./bin/4dl get --stdin --save-to ./downloads
 ```
 
-Repeat `provider` to select multiple providers. If `provider` is omitted, the
-server searches every configured provider. The OpenAPI document defines
-parameters, response schemas, and error schemas.
-
-`GET /healthz` returns `{ "status": "ok" }`.
-
-## CLI
-
-Run the API server on the default address `127.0.0.1:6567`:
+`--save-to` is required, so the download directory is always explicit:
 
 ```bash
-go run ./cmd/server server
+./bin/4dl get --input results.json --save-to ~/Downloads
 ```
 
-Change the listen address:
+## Search API Mode
+
+Run a long-lived local Search API server when you want to call 404 Downloader
+from scripts, tools, or the interactive API docs:
 
 ```bash
-go run ./cmd/server server --listen :18080
+./bin/4dl server
 ```
 
-Search files and print JSON:
-
-```bash
-go run ./cmd/server search "mortal kombat ii 2160p"
-```
-
-By default, `search` starts an embedded Search API server for the current
-command and queries all providers.
-
-Use a non-default API server:
-
-```bash
-go run ./cmd/server search --server-url http://127.0.0.1:18080 "mortal kombat ii"
-```
-
-Limit providers while debugging:
-
-```bash
-go run ./cmd/server search --provider knaben --provider torrentclaw "mortal kombat ii"
-```
-
-Serve search results through the local get UI:
-
-```bash
-go run ./cmd/server search "mortal kombat ii" | go run ./cmd/server get --stdin
-```
-
-Serve saved search results:
-
-```bash
-go run ./cmd/server get --input results.json
-```
-
-## get UI
-
-`get` listens on `127.0.0.1:6570` by default. It reads search result JSON, opens a
-local web UI, and uses anacrolix/torrent to resolve metadata and download files
-directly through BitTorrent into `--save-to`.
-
-The UI shows:
-
-- Torrent summary, provider, size, seeds, peers, info hash, and magnet link.
-- Torrent-level `Start`, `Pause`, and `Delete` actions.
-- Files from loaded torrent metadata as a read-only view of torrent contents.
-- Runtime diagnostics: Peers, DHT, Events, and Pieces.
-- A virtualized piece grid where one box is one real BitTorrent piece from the
-  torrent-level anacrolix state.
-
-Piece hover text shows the piece index, state, and priority reported by
-anacrolix for diagnostics. The UI colors pieces by actual torrent state.
-
-get API:
+Open the API docs:
 
 ```text
-GET /api/torrents
-GET /api/torrents/{id}
-GET /api/torrents/{id}/stream
-POST /api/torrents/{id}/start
-POST /api/torrents/{id}/pause
-POST /api/torrents/{id}/delete
+http://127.0.0.1:6567/docs
 ```
 
-`/api/torrents` is a cheap list endpoint and does not add torrents to the
-BitTorrent runtime. Torrent download actions load metadata when needed through
-anacrolix/torrent. The per-torrent SSE stream pushes live updates only for
-active torrents.
+Search through the API:
+
+```bash
+curl --noproxy '*' 'http://127.0.0.1:6567/v1/search?q=linux%20interface&limit=3'
+```
+
+The CLI can also call an existing API server explicitly:
+
+```bash
+./bin/4dl search --server-url http://127.0.0.1:6567 "linux interface"
+```
 
 ## Configuration
 
-Non-sensitive settings are configured with flags:
+Common options:
 
 ```text
-server --listen 127.0.0.1:6567 --limit-size 50 --timeout 8s
 search --limit-size 50 --timeout 8s
+server --listen 127.0.0.1:6567 --limit-size 50 --timeout 8s
+get --listen 127.0.0.1:6570 --save-to ./downloads
 ```
-
-The server's default limit is used when the API `limit` parameter is omitted.
-API limits are capped at 200 by the API handler.
 
 Environment variables are reserved for sensitive values:
 
 ```text
 TORRENTCLAW_API_KEY=
-MVDL_CRYKEY=
+FOURDL_CRYKEY=
 ```
 
-`TORRENTCLAW_API_KEY` is sent as `Authorization: Bearer <key>` when configured.
-TorrentClaw may require an API key for magnet links.
+`TORRENTCLAW_API_KEY` is used when TorrentClaw requires an API key.
 
-`MVDL_CRYKEY` must be exactly 32 bytes. When it is set for `server`, non-empty
-`magnetUrl` values are encrypted with AES-256-GCM before being returned. When it
-is set for `get`, encrypted magnet values from saved API results are decrypted
-before metadata loading.
-
-get flags:
-
-```text
---input          search result JSON input file
---stdin          read search result JSON from stdin
---listen         HTTP listen address, default 127.0.0.1:6570
---save-to        directory to save downloaded files
---torrent-listen BitTorrent listen address, default :42069
-```
+`FOURDL_CRYKEY` enables encryption for returned magnet URLs and decryption when
+loading encrypted saved results. It must be exactly 32 bytes.
 
 ## Docker
 
 Build:
 
 ```bash
-docker build -t mvdl .
+docker build -t 404-downloader .
 ```
 
 Run the API server:
 
 ```bash
-docker run --rm -p 6567:8080 mvdl
+docker run --rm -p 6567:8080 404-downloader
 ```
 
 Run on a custom address inside the container:
 
 ```bash
-docker run --rm -p 18080:18080 mvdl server --listen :18080
+docker run --rm -p 18080:18080 404-downloader server --listen :18080
 ```
-
-## Notes
-
-Search providers are queried concurrently. If one provider fails, mvdl returns
-results from the providers that succeeded. The request fails only when every
-configured provider fails or no provider is configured.
-
-Runtime diagnostics are process-local. Peer events, latest useful piece peers,
-and DHT observations are collected from the running get process and are not a
-historical database.

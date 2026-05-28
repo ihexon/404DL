@@ -12,10 +12,10 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"mvdl/internal/logging"
-	"mvdl/internal/magnet"
-	"mvdl/internal/model"
-	"mvdl/internal/provider"
+	"4dl/internal/logging"
+	"4dl/internal/magnet"
+	"4dl/internal/model"
+	"4dl/internal/provider"
 )
 
 const (
@@ -140,7 +140,7 @@ func (c *Client) search(ctx context.Context, req SearchRequest) ([]searchHit, er
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("User-Agent", "mvdl/1.0")
+	httpReq.Header.Set("User-Agent", "4dl/1.0")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
