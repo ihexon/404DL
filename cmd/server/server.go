@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
@@ -25,10 +26,7 @@ func runServer(c *cli.Context) error {
 		"magnet_encryption": cfg.MagnetEncryptor != nil,
 	}).Info("server configured")
 
-	handler, err := newSearchHandler(cfg)
-	if err != nil {
-		return err
-	}
+	handler := newSearchHandler(cfg)
 
 	logrus.WithFields(logrus.Fields{
 		"listen": cfg.Addr,
@@ -40,41 +38,47 @@ func runServer(c *cli.Context) error {
 	return nil
 }
 
-func newSearchHandler(cfg server.Config, providerNames ...string) (*server.Handler, error) {
-	searcher, err := newSearchAggregator(cfg.HTTPClient, providerNames...)
-	if err != nil {
-		return nil, err
-	}
-	return server.NewHandler(searcher, cfg), nil
+func newSearchHandler(cfg server.Config) *server.Handler {
+	searcher := newSearchAggregator(cfg.HTTPClient)
+	return server.NewHandler(searcher, cfg)
 }
 
 func newServerConfig(c *cli.Context) (server.Config, error) {
-	magnetEncryptor, err := newMagnetEncryptor()
+	cfg, err := newSearchServerConfig(c.Int(FlagLimitSize), c.Duration(FlagTimeout), true)
 	if err != nil {
 		return server.Config{}, err
 	}
+	cfg.Addr = c.String(FlagListen)
+	return cfg, nil
+}
 
+func newSearchServerConfig(defaultLimit int, upstreamTimeout time.Duration, warnMissingCryptoKey bool) (server.Config, error) {
+	magnetEncryptor, err := newMagnetEncryptor(warnMissingCryptoKey)
+	if err != nil {
+		return server.Config{}, err
+	}
 	return server.Config{
-		Addr:         c.String(FlagListen),
-		DefaultLimit: server.NormalizeLimit(c.Int(FlagLimitSize)),
+		DefaultLimit: server.NormalizeLimit(defaultLimit),
 		HTTPClient: &http.Client{
-			Timeout: c.Duration(FlagTimeout),
+			Timeout: upstreamTimeout,
 		},
 		MagnetEncryptor: magnetEncryptor,
 	}, nil
 }
 
-func newMagnetEncryptor() (server.StringEncryptor, error) {
+func newMagnetEncryptor(warnMissing bool) (server.StringEncryptor, error) {
 	encryptor, enabled, err := newOptionalMagnetEncryptor()
 	if !enabled {
-		logrus.Warnf("magnetUrl encryption disabled: environment var %s is not set", envCryptoKey)
+		if warnMissing {
+			logrus.Warnf("magnetUrl encryption disabled: environment var %s is not set", envCryptoKey)
+		}
 		return nil, nil
 	}
 	return encryptor, err
 }
 
 func newOptionalMagnetEncryptor() (server.StringEncryptor, bool, error) {
-	key := envString(envCryptoKey, "")
+	key := secretEnvString(envCryptoKey, "")
 	if key == "" {
 		return nil, false, nil
 	}
@@ -86,7 +90,7 @@ func newOptionalMagnetEncryptor() (server.StringEncryptor, bool, error) {
 	return encryptor, true, nil
 }
 
-func envString(name, fallback string) string {
+func secretEnvString(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
 	}

@@ -32,22 +32,19 @@ func newServerCommand() *cli.Command {
 func serverFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
-			Name:    FlagListen,
-			Usage:   "listen address",
-			Value:   DefaultListenAddr,
-			EnvVars: []string{envAddr},
+			Name:  FlagListen,
+			Usage: "listen address",
+			Value: DefaultListenAddr,
 		},
 		&cli.IntFlag{
-			Name:    FlagLimitSize,
-			Usage:   "maximum returned results, default 50",
-			Value:   searchapi.DefaultSearchLimit,
-			EnvVars: []string{envLimitSize},
+			Name:  FlagLimitSize,
+			Usage: "maximum returned results, default 50",
+			Value: searchapi.DefaultSearchLimit,
 		},
 		&cli.DurationFlag{
-			Name:    FlagTimeout,
-			Usage:   "upstream timeout, default 8s",
-			Value:   8 * time.Second,
-			EnvVars: []string{envUpstreamTimeout},
+			Name:  FlagTimeout,
+			Usage: "upstream timeout, default 8s",
+			Value: 8 * time.Second,
 		},
 	}
 }
@@ -55,9 +52,13 @@ func serverFlags() []cli.Flag {
 func newSearchCommand() *cli.Command {
 	return &cli.Command{
 		Name:      SubCmdSearch,
-		Usage:     "search files through providers",
+		Usage:     "search files through the Search API",
 		UsageText: "mvdl search <query>",
 		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:  FlagServerURL,
+				Usage: "external search API server URL; omitted uses an embedded server",
+			},
 			&cli.DurationFlag{
 				Name:  FlagTimeout,
 				Usage: "search timeout, default 8s",
@@ -70,7 +71,7 @@ func newSearchCommand() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  FlagProvider,
-				Usage: "debug selected providers; repeat for multiple providers, for example --provider knaben --provider torrentclaw",
+				Usage: "selected provider; repeat for multiple providers, for example --provider knaben --provider torrentclaw",
 			},
 		},
 		Action: runSearch,

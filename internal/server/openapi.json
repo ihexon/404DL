@@ -58,6 +58,24 @@
               "maximum": 200
             },
             "example": 3
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Provider to query. Repeat this parameter to search multiple providers. If omitted, all configured providers are searched.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ProviderName"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "example": [
+              "knaben",
+              "torrentclaw"
+            ]
           }
         ],
         "responses": {
@@ -103,7 +121,7 @@
     },
     "responses": {
       "BadRequest": {
-        "description": "The request query parameters are invalid.",
+        "description": "The request query parameters are invalid, including unknown providers.",
         "headers": {
           "X-Request-ID": {
             "$ref": "#/components/headers/RequestID"
@@ -211,6 +229,13 @@
           }
         },
         "additionalProperties": false
+      },
+      "ProviderName": {
+        "type": "string",
+        "enum": [
+          "knaben",
+          "torrentclaw"
+        ]
       },
       "ErrorResponse": {
         "type": "object",
