@@ -2,13 +2,13 @@ FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
-RUN apk add --no-cache make npm
+RUN apk add --no-cache build-base make npm
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN make build BUILD_DIR=/out BINARY=4dl CGO_ENABLED=0 GOOS=linux
+RUN make build BUILD_DIR=/out BINARY=4dl CGO_ENABLED=1 GOOS=linux GOARCH=amd64
 
 FROM alpine:3.22
 
