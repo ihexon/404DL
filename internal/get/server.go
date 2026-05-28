@@ -94,8 +94,8 @@ type Server struct {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/torrents", s.handleListTorrents)
+	mux.HandleFunc("GET /api/torrents/stream", s.handleStreamTorrents)
 	mux.HandleFunc("GET /api/torrents/{id}", s.handleGetTorrent)
-	mux.HandleFunc("GET /api/torrents/{id}/stream", s.handleStreamTorrent)
 	mux.HandleFunc("POST /api/torrents/{id}/start", s.handleStartDownload)
 	mux.HandleFunc("POST /api/torrents/{id}/pause", s.handlePauseDownload)
 	mux.HandleFunc("POST /api/torrents/{id}/delete", s.handleDeleteDownload)
@@ -111,6 +111,31 @@ func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
+func (s *Server) handleStreamTorrents(w http.ResponseWriter, r *http.Request) {
+	rc := http.NewResponseController(w)
+	setSSEHeaders(w)
+
+	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Debug("get torrent list stream opened")
+	defer logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Debug("get torrent list stream closed")
+
+	if !s.writeTorrentListEvent(w, rc, r) {
+		return
+	}
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !s.writeTorrentListEvent(w, rc, r) {
+				return
+			}
+		}
+	}
+}
+
 func (s *Server) handleGetTorrent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	state, ok := s.manager.TorrentState(id)
@@ -124,63 +149,23 @@ func (s *Server) handleGetTorrent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
-func (s *Server) handleStreamTorrent(w http.ResponseWriter, r *http.Request) {
-	rc := http.NewResponseController(w)
-	if err := rc.Flush(); err != nil {
-		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Error("get torrent stream failed: response writer cannot flush")
-		writeJSON(w, http.StatusInternalServerError, APIError{Error: "streaming unsupported"})
-		return
-	}
-	id := r.PathValue("id")
-	if _, ok := s.manager.TorrentState(id); !ok {
-		writeJSON(w, http.StatusNotFound, APIError{Error: "torrent not found"})
-		return
-	}
-
+func setSSEHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-
-	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id": id,
-	})).Debug("get torrent stream opened")
-	defer logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id": id,
-	})).Debug("get torrent stream closed")
-
-	if !s.writeTorrentEvent(w, rc, r, id) {
-		return
-	}
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			if !s.writeTorrentEvent(w, rc, r, id) {
-				return
-			}
-		}
-	}
 }
 
-func (s *Server) writeTorrentEvent(w http.ResponseWriter, rc *http.ResponseController, r *http.Request, id string) bool {
-	state, ok := s.manager.TorrentState(id)
-	if !ok {
-		if err := writeSSE(w, "error", APIError{Error: "torrent not found"}); err != nil {
-			logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{"id": id})).Warn("get torrent stream write failed")
-		}
-		_ = rc.Flush()
+func (s *Server) writeTorrentListEvent(w http.ResponseWriter, rc *http.ResponseController, r *http.Request) bool {
+	state := s.manager.State(r.Context())
+	if err := writeSSE(w, "state", state); err != nil {
+		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Warn("get torrent list stream write failed")
 		return false
 	}
-	if err := writeSSE(w, "torrent", state); err != nil {
-		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{"id": id})).Warn("get torrent stream write failed")
+	if err := rc.Flush(); err != nil {
+		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Warn("get torrent list stream flush failed")
 		return false
 	}
-	_ = rc.Flush()
 	return true
 }
 

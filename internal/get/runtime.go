@@ -27,21 +27,22 @@ type RuntimeSnapshot struct {
 }
 
 type RuntimeSummary struct {
-	InfoHash            string `json:"infoHash,omitempty"`
-	Name                string `json:"name,omitempty"`
-	MetadataReady       bool   `json:"metadataReady"`
-	BytesCompleted      int64  `json:"bytesCompleted"`
-	Length              int64  `json:"length"`
-	PendingPeers        int    `json:"pendingPeers"`
-	ActivePeers         int    `json:"activePeers"`
-	ConnectedSeeders    int    `json:"connectedSeeders"`
-	HalfOpenPeers       int    `json:"halfOpenPeers"`
-	PiecesComplete      int    `json:"piecesComplete"`
-	NumPieces           int    `json:"numPieces"`
-	ChunksReadUseful    int64  `json:"chunksReadUseful"`
-	ChunksReadWasted    int64  `json:"chunksReadWasted"`
-	BytesReadUsefulData int64  `json:"bytesReadUsefulData"`
-	BytesWrittenData    int64  `json:"bytesWrittenData"`
+	InfoHash            string  `json:"infoHash,omitempty"`
+	Name                string  `json:"name,omitempty"`
+	MetadataReady       bool    `json:"metadataReady"`
+	BytesCompleted      int64   `json:"bytesCompleted"`
+	Length              int64   `json:"length"`
+	DownloadRate        float64 `json:"downloadRate"`
+	PendingPeers        int     `json:"pendingPeers"`
+	ActivePeers         int     `json:"activePeers"`
+	ConnectedSeeders    int     `json:"connectedSeeders"`
+	HalfOpenPeers       int     `json:"halfOpenPeers"`
+	PiecesComplete      int     `json:"piecesComplete"`
+	NumPieces           int     `json:"numPieces"`
+	ChunksReadUseful    int64   `json:"chunksReadUseful"`
+	ChunksReadWasted    int64   `json:"chunksReadWasted"`
+	BytesReadUsefulData int64   `json:"bytesReadUsefulData"`
+	BytesWrittenData    int64   `json:"bytesWrittenData"`
 }
 
 type RuntimePeer struct {
@@ -126,11 +127,12 @@ func (c *runtimeCollector) callbacks() torrent.Callbacks {
 }
 
 func (c *runtimeCollector) snapshot(id string, client *torrent.Client, t *torrent.Torrent) RuntimeSnapshot {
+	peers := activePeers(t)
 	snapshot := RuntimeSnapshot{
 		ID:        id,
 		Updated:   time.Now().Format(time.RFC3339),
-		Summary:   torrentSummary(client, t),
-		Peers:     torrentPeers(t),
+		Summary:   torrentSummary(t, peers),
+		Peers:     torrentPeers(peers),
 		PieceRuns: c.torrentPieceRuns(t),
 		DHT:       dhtServers(client),
 		Events:    c.eventsFor(t.InfoHash().HexString()),
@@ -301,10 +303,11 @@ func peerEvent(eventType string, peer *torrent.Peer) RuntimeTorrentEvent {
 	return event
 }
 
-func torrentSummary(client *torrent.Client, t *torrent.Torrent) RuntimeSummary {
+func torrentSummary(t *torrent.Torrent, peers []RuntimePeer) RuntimeSummary {
 	summary := RuntimeSummary{
-		InfoHash: t.InfoHash().HexString(),
-		Name:     t.Name(),
+		InfoHash:     t.InfoHash().HexString(),
+		Name:         t.Name(),
+		DownloadRate: totalDownloadRate(peers),
 	}
 	if t.Info() != nil {
 		summary.MetadataReady = true
@@ -325,8 +328,15 @@ func torrentSummary(client *torrent.Client, t *torrent.Torrent) RuntimeSummary {
 	return summary
 }
 
-func torrentPeers(t *torrent.Torrent) []RuntimePeer {
-	peers := activePeers(t)
+func totalDownloadRate(peers []RuntimePeer) float64 {
+	var total float64
+	for _, peer := range peers {
+		total += peer.DownloadRate
+	}
+	return total
+}
+
+func torrentPeers(peers []RuntimePeer) []RuntimePeer {
 	sort.SliceStable(peers, func(i, j int) bool {
 		if peers[i].DownloadRate != peers[j].DownloadRate {
 			return peers[i].DownloadRate > peers[j].DownloadRate
