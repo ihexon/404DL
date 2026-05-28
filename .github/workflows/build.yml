@@ -39,6 +39,7 @@ jobs:
             binary: 4dl
             c_compiler: cc
             cxx_compiler: c++
+            ldflags: '-s -w -linkmode external -extldflags "-static"'
             release_name: 4dl-linux-amd64
             artifact: 4dl-linux-amd64.tar.gz
           - name: linux-arm64
@@ -48,6 +49,7 @@ jobs:
             binary: 4dl
             c_compiler: cc
             cxx_compiler: c++
+            ldflags: '-s -w -linkmode external -extldflags "-static"'
             release_name: 4dl-linux-arm64
             artifact: 4dl-linux-arm64.tar.gz
           - name: macos-x86_64
@@ -57,6 +59,7 @@ jobs:
             binary: 4dl
             c_compiler: cc
             cxx_compiler: c++
+            ldflags: '-s -w'
             release_name: 4dl-darwin-amd64
             artifact: 4dl-darwin-amd64.tar.gz
           - name: macos-arm64
@@ -66,6 +69,7 @@ jobs:
             binary: 4dl
             c_compiler: cc
             cxx_compiler: c++
+            ldflags: '-s -w'
             release_name: 4dl-darwin-arm64
             artifact: 4dl-darwin-arm64.tar.gz
           - name: windows-x86_64
@@ -76,6 +80,7 @@ jobs:
             msystem: MINGW64
             c_compiler: gcc
             cxx_compiler: g++
+            ldflags: '-s -w -linkmode external -extldflags "-static"'
             release_name: 4dl-windows-amd64
             artifact: 4dl-windows-amd64.zip
           - name: windows-arm64
@@ -86,6 +91,7 @@ jobs:
             msystem: CLANGARM64
             c_compiler: clang
             cxx_compiler: clang++
+            ldflags: '-s -w -linkmode external -extldflags "-static"'
             release_name: 4dl-windows-arm64
             artifact: 4dl-windows-arm64.zip
 
@@ -118,6 +124,7 @@ jobs:
           path-type: inherit
           install: >-
             base-devel
+            binutils
             zip
           pacboy: toolchain:p
 
@@ -140,6 +147,7 @@ jobs:
             CGO_ENABLED=1 \
             CC="${{ matrix.c_compiler }}" \
             CXX="${{ matrix.cxx_compiler }}" \
+            LDFLAGS="${{ matrix.ldflags }}" \
             RELEASE_NAME="${{ matrix.release_name }}"
 
       - name: Build release package
@@ -155,7 +163,60 @@ jobs:
             CGO_ENABLED=1 \
             CC="${{ matrix.c_compiler }}" \
             CXX="${{ matrix.cxx_compiler }}" \
+            LDFLAGS="${{ matrix.ldflags }}" \
             RELEASE_NAME="${{ matrix.release_name }}"
+
+      - name: Check Linux binary dependencies
+        if: matrix.goos == 'linux'
+        shell: bash
+        run: |
+          bin="dist/${{ matrix.release_name }}/${{ matrix.binary }}"
+          file "$bin"
+          deps="$(ldd "$bin" 2>&1 || true)"
+          echo "$deps"
+          grep -q "not a dynamic executable" <<<"$deps"
+
+      - name: Check macOS binary dependencies
+        if: matrix.goos == 'darwin'
+        shell: bash
+        run: |
+          bin="dist/${{ matrix.release_name }}/${{ matrix.binary }}"
+          file "$bin"
+          deps="$(otool -L "$bin" | tail -n +2)"
+          echo "$deps"
+          third_party="$(awk '{print $1}' <<<"$deps" | grep -Ev '^(/usr/lib/|/System/Library/)' || true)"
+          if [ -n "$third_party" ]; then
+            echo "Found non-system dynamic dependencies:"
+            echo "$third_party"
+            exit 1
+          fi
+
+      - name: Check Windows binary dependencies
+        if: matrix.goos == 'windows'
+        shell: msys2 {0}
+        run: |
+          bin="dist/${{ matrix.release_name }}/${{ matrix.binary }}"
+          file "$bin"
+          deps="$(objdump -p "$bin" | sed -n 's/^[[:space:]]*DLL Name: //p')"
+          echo "$deps"
+
+          shopt -s nocasematch
+          bad=()
+          while IFS= read -r dll; do
+            case "$dll" in
+              ADVAPI32.dll|BCRYPT.dll|CRYPT32.dll|DNSAPI.dll|GDI32.dll|IPHLPAPI.dll|KERNEL32.dll|MSVCRT.dll|NETAPI32.dll|NORMALIZ.dll|NSI.dll|NTDLL.dll|OLE32.dll|OLEAUT32.dll|PSAPI.dll|RPCRT4.dll|SECUR32.dll|SECHOST.dll|SETUPAPI.dll|SHELL32.dll|USER32.dll|USERENV.dll|UCRTBASE.dll|VERSION.dll|WINHTTP.dll|WININET.dll|WINMM.dll|WLDAP32.dll|WS2_32.dll|WSOCK32.dll|api-ms-win-*.dll|ext-ms-*.dll)
+                ;;
+              *)
+                bad+=("$dll")
+                ;;
+            esac
+          done <<<"$deps"
+
+          if [ "${#bad[@]}" -ne 0 ]; then
+            echo "Found non-system dynamic dependencies:"
+            printf '%s\n' "${bad[@]}"
+            exit 1
+          fi
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7.0.1
