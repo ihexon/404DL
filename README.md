@@ -1,18 +1,32 @@
 # 404 Downloader
 
-404 Downloader is a local torrent search and download web app.
+404 Downloader is a local torrent discovery and download workspace. It gives you
+a browser-based control panel for searching supported torrent indexes, reviewing
+candidates, and managing downloads from one place.
 
-It starts one local HTTP server with a browser UI where you can search supported
-providers, choose a result to download, pause or delete downloads, and inspect
-runtime progress.
+The app runs on your machine, stores files in a directory you choose, and keeps
+search results separate from active downloads until you explicitly start one.
 
-## What It Does
+## Why Use It
 
-- Searches torrent providers from the web UI.
-- Shows search results as candidates; they are not added to BitTorrent until selected.
-- Downloads through BitTorrent into an explicit save directory.
-- Shows files, peers, pieces, DHT state, and recent runtime events.
-- Exposes a local OpenAPI-documented HTTP API for automation.
+- Search supported torrent providers without leaving the local web UI.
+- Review result details before adding anything to the download queue.
+- Start, pause, resume, and delete downloads from a single dashboard.
+- Track progress with file, peer, piece, DHT, and runtime event views.
+- Keep automation available through a local HTTP API when you need it.
+
+## Product Experience
+
+404 Downloader is built around a simple flow:
+
+1. Start the local app.
+2. Open the web UI in your browser.
+3. Search for a torrent.
+4. Choose the result you want to download.
+5. Monitor progress and manage the download from the dashboard.
+
+New searches refresh the search area only. Existing downloads stay visible and
+manageable, whether they are active, paused, or complete.
 
 ## Quick Start
 
@@ -30,40 +44,23 @@ Start the web UI:
 ./bin/4dl --save-to ~/Downloads
 ```
 
+Open the logged local URL in your browser. By default the app listens on
+`127.0.0.1:6570`.
+
 Use a fixed listen address when needed:
 
 ```bash
 ./bin/4dl --listen 127.0.0.1:6570 --save-to ~/Downloads
 ```
 
-Open the logged web URL in your browser. Search for a torrent, then click
-Download on one result. New searches replace only the search results; active,
-paused, and completed downloads remain.
+## Dashboard
 
-## HTTP API
+The web UI focuses on day-to-day download management:
 
-The web app also exposes local API docs:
-
-```text
-http://127.0.0.1:6570/api/docs/
-```
-
-Useful endpoints:
-
-```text
-GET  /api/healthz
-POST /api/search
-GET  /api/torrents
-POST /api/torrents
-GET  /api/torrents/stream
-GET  /api/torrents/stream2
-POST /api/torrents/{id}/start
-POST /api/torrents/{id}/pause
-POST /api/torrents/{id}/delete
-```
-
-`/api/torrents/stream` is Server-Sent Events. Swagger UI may not be reliable
-for trying that endpoint directly; use `curl -N` or browser `EventSource`.
+- Search results appear as candidates until you click Download.
+- Download cards show status, size, seeders, peers, files, and errors.
+- Runtime diagnostics help explain what the BitTorrent engine is doing.
+- Completed and paused downloads remain available after new searches.
 
 ## Configuration
 
@@ -77,13 +74,16 @@ Common options:
 --timeout 8s
 ```
 
-Environment variables:
+Set `TORRENTCLAW_API_KEY` when TorrentClaw requires an API key.
+
+## Local API
+
+The app also exposes a local HTTP API for scripts and integrations. API docs are
+available while the app is running:
 
 ```text
-TORRENTCLAW_API_KEY=
+http://127.0.0.1:6570/api/docs/
 ```
-
-`TORRENTCLAW_API_KEY` is used when TorrentClaw requires an API key.
 
 ## Docker
 
