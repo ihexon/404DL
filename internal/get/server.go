@@ -95,6 +95,7 @@ type Server struct {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/healthz", s.handleHealth)
 	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPI)
 	mux.Handle("GET /api/docs/", v5emb.New("404 Downloader Get API", "/api/openapi.json", "/api/docs/"))
 	mux.HandleFunc("GET /api/docs", redirectToDocs)
@@ -106,6 +107,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/torrents/{id}/delete", s.handleDeleteDownload)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return requestLogger(mux)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
 func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {

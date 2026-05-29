@@ -12,8 +12,10 @@
 
 - 普通接口返回 `application/json; charset=utf-8`。
 - 错误响应统一为 `{"error":"message"}`，对应 OpenAPI schema `APIError`。
+- 健康检查接口为 `GET /api/healthz`，成功返回 `{"status":"ok"}`。
 - 实时状态使用全局 SSE：`GET /api/torrents/stream`。
 - SSE 事件名为 `state`，`data` 内容是 `AppState` JSON。
+- `/api/docs/` 里的 Swagger UI 不能可靠 Try out SSE 长连接；调试时使用 `curl -N /api/torrents/stream` 或浏览器 `EventSource`。
 - 不维护 per-torrent SSE；详情通过 `GET /api/torrents/{id}` 获取。
 
 ## 维护规则

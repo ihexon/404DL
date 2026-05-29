@@ -8,6 +8,10 @@ type Config struct {
 	CryptoKey         string
 }
 
+type HealthResponse struct {
+	Status string `json:"status"`
+}
+
 type FileStatus string
 
 const (

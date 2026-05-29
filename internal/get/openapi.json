@@ -12,6 +12,24 @@
     }
   ],
   "paths": {
+    "/api/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "The local get server is ready to accept requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/openapi.json": {
       "get": {
         "operationId": "getOpenAPISpec",
@@ -57,8 +75,8 @@
     "/api/torrents/stream": {
       "get": {
         "operationId": "streamTorrents",
-        "summary": "Stream torrent state",
-        "description": "Streams AppState snapshots as Server-Sent Events. The server emits a state event immediately after connection and then roughly once per second until the request is closed or writing fails.",
+        "summary": "Stream torrent state (SSE)",
+        "description": "Streams AppState snapshots as Server-Sent Events. The server emits a state event immediately after connection and then roughly once per second until the request is closed or writing fails.\n\nSwagger UI cannot reliably Try it out because this response is a long-lived text/event-stream. Use curl -N /api/torrents/stream or browser EventSource instead.",
         "responses": {
           "200": {
             "description": "Server-Sent Events stream. Each event uses event name state and a JSON AppState payload in data.",
@@ -284,6 +302,19 @@
       }
     },
     "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          }
+        },
+        "additionalProperties": false
+      },
       "APIError": {
         "type": "object",
         "required": [
