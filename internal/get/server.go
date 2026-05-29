@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/swaggest/swgui/v5emb"
 
 	"4dl/internal/logging"
 )
 
 const (
 	defaultTorrentListenAddr = ":0"
+	openAPISpecContentType   = "application/vnd.oai.openapi+json; charset=utf-8"
 	slowRequestThreshold     = 2 * time.Second
 )
 
@@ -93,6 +95,9 @@ type Server struct {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPI)
+	mux.Handle("GET /api/docs/", v5emb.New("404 Downloader Get API", "/api/openapi.json", "/api/docs/"))
+	mux.HandleFunc("GET /api/docs", redirectToDocs)
 	mux.HandleFunc("GET /api/torrents", s.handleListTorrents)
 	mux.HandleFunc("GET /api/torrents/stream", s.handleStreamTorrents)
 	mux.HandleFunc("GET /api/torrents/{id}", s.handleGetTorrent)
@@ -101,6 +106,16 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/torrents/{id}/delete", s.handleDeleteDownload)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return requestLogger(mux)
+}
+
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", openAPISpecContentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(openAPISpec)
+}
+
+func redirectToDocs(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/api/docs/", http.StatusMovedPermanently)
 }
 
 func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,889 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "404 Downloader Get API",
+    "version": "1.0.0",
+    "description": "Local HTTP API used by the in-process 404 Downloader get web UI. This API is intended for the local browser session started by the get command, not as a public external service contract."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current local get server"
+    }
+  ],
+  "paths": {
+    "/api/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPISpec",
+        "summary": "OpenAPI specification",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI specification for the local get API.",
+            "content": {
+              "application/vnd.oai.openapi+json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/torrents": {
+      "get": {
+        "operationId": "listTorrents",
+        "summary": "List torrents",
+        "description": "Returns the current torrent list snapshot. List items usually omit file details to keep the response small.",
+        "responses": {
+          "200": {
+            "description": "Current application state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppState"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/torrents/stream": {
+      "get": {
+        "operationId": "streamTorrents",
+        "summary": "Stream torrent state",
+        "description": "Streams AppState snapshots as Server-Sent Events. The server emits a state event immediately after connection and then roughly once per second until the request is closed or writing fails.",
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream. Each event uses event name state and a JSON AppState payload in data.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always no-cache.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-cache"
+                }
+              },
+              "Connection": {
+                "description": "Always keep-alive.",
+                "schema": {
+                  "type": "string",
+                  "const": "keep-alive"
+                }
+              },
+              "X-Accel-Buffering": {
+                "description": "Disables proxy buffering for compatible proxies.",
+                "schema": {
+                  "type": "string",
+                  "const": "no"
+                }
+              }
+            },
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "SSE frames in the form event: state followed by data: <AppState JSON>."
+                },
+                "examples": {
+                  "state": {
+                    "summary": "State event",
+                    "value": "event: state\ndata: {\"updated\":\"2026-05-28T12:00:00+08:00\",\"saveTo\":\"/downloads\",\"torrents\":[]}\n\n"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/torrents/{id}": {
+      "get": {
+        "operationId": "getTorrent",
+        "summary": "Get torrent",
+        "description": "Returns one torrent with full state. File details are included when metadata is ready.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TorrentID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Torrent state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentState"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/TorrentNotFound"
+          }
+        }
+      }
+    },
+    "/api/torrents/{id}/start": {
+      "post": {
+        "operationId": "startTorrentDownload",
+        "summary": "Start torrent download",
+        "description": "Starts or resumes the torrent. The current implementation waits for metadata before returning, so this request may block for a while.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TorrentID"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyJSON"
+        },
+        "responses": {
+          "202": {
+            "description": "Download started or resumed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentState"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/TorrentNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/torrents/{id}/pause": {
+      "post": {
+        "operationId": "pauseTorrentDownload",
+        "summary": "Pause torrent download",
+        "description": "Pauses an active torrent download. If the torrent has no active runtime, the API returns the current item state.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TorrentID"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyJSON"
+        },
+        "responses": {
+          "200": {
+            "description": "Download paused or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentState"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/TorrentNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/torrents/{id}/delete": {
+      "post": {
+        "operationId": "deleteTorrentDownload",
+        "summary": "Delete downloaded data",
+        "description": "Cancels the torrent runtime, prevents more downloading, and attempts to delete saved files or part files.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TorrentID"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/EmptyJSON"
+        },
+        "responses": {
+          "200": {
+            "description": "Local download state deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentState"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/TorrentNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "TorrentID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Torrent item identifier.",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "requestBodies": {
+      "EmptyJSON": {
+        "description": "Request body is currently ignored. The web UI sends an empty JSON object.",
+        "required": false,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "example": {}
+          }
+        }
+      }
+    },
+    "responses": {
+      "TorrentNotFound": {
+        "description": "Torrent was not found.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            },
+            "example": {
+              "error": "torrent not found"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The requested torrent operation could not be completed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "APIError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AppState": {
+        "type": "object",
+        "required": [
+          "updated",
+          "saveTo",
+          "torrents"
+        ],
+        "properties": {
+          "updated": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time when this snapshot was generated."
+          },
+          "saveTo": {
+            "type": "string",
+            "description": "Download save directory."
+          },
+          "torrents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TorrentState"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TorrentState": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "provider",
+          "seeders",
+          "peers",
+          "downloading",
+          "download",
+          "runtime"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "category": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "description": "Provider-supplied date string."
+          },
+          "seeders": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "peers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hash": {
+            "type": "string",
+            "description": "BitTorrent v1 info hash when available."
+          },
+          "magnetUrl": {
+            "type": "string",
+            "description": "Magnet link when available."
+          },
+          "downloading": {
+            "type": "boolean"
+          },
+          "download": {
+            "$ref": "#/components/schemas/DownloadView"
+          },
+          "error": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileItem"
+            }
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/RuntimeView"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TorrentItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "provider",
+          "seeders",
+          "peers",
+          "downloading",
+          "download"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "category": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "description": "Provider-supplied date string."
+          },
+          "seeders": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "peers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hash": {
+            "type": "string",
+            "description": "BitTorrent v1 info hash when available."
+          },
+          "magnetUrl": {
+            "type": "string",
+            "description": "Magnet link when available."
+          },
+          "downloading": {
+            "type": "boolean"
+          },
+          "download": {
+            "$ref": "#/components/schemas/DownloadView"
+          },
+          "error": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileItem"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DownloadView": {
+        "type": "object",
+        "required": [
+          "status",
+          "completedBytes",
+          "bytes"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TorrentDownloadStatus"
+          },
+          "completedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "TorrentDownloadStatus": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "downloading",
+          "paused",
+          "complete"
+        ]
+      },
+      "RuntimeView": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/RuntimeStatus"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/RuntimeSnapshot"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimeStatus": {
+        "type": "string",
+        "enum": [
+          "inactive",
+          "ready",
+          "error"
+        ]
+      },
+      "RuntimeSnapshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "updated",
+          "summary",
+          "peers",
+          "pieceRuns",
+          "dht",
+          "events"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/RuntimeSummary"
+          },
+          "peers": {
+            "type": "array",
+            "maxItems": 30,
+            "items": {
+              "$ref": "#/components/schemas/RuntimePeer"
+            }
+          },
+          "pieceRuns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimePieceRun"
+            }
+          },
+          "dht": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeDHTServer"
+            }
+          },
+          "events": {
+            "type": "array",
+            "maxItems": 160,
+            "items": {
+              "$ref": "#/components/schemas/RuntimeTorrentEvent"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimeSummary": {
+        "type": "object",
+        "required": [
+          "metadataReady",
+          "bytesCompleted",
+          "length",
+          "downloadRate",
+          "pendingPeers",
+          "activePeers",
+          "connectedSeeders",
+          "halfOpenPeers",
+          "piecesComplete",
+          "numPieces",
+          "chunksReadUseful",
+          "chunksReadWasted",
+          "bytesReadUsefulData",
+          "bytesWrittenData"
+        ],
+        "properties": {
+          "infoHash": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "metadataReady": {
+            "type": "boolean"
+          },
+          "bytesCompleted": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "length": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "downloadRate": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "pendingPeers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "activePeers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "connectedSeeders": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "halfOpenPeers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "piecesComplete": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "numPieces": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "chunksReadUseful": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "chunksReadWasted": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytesReadUsefulData": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytesWrittenData": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimePeer": {
+        "type": "object",
+        "required": [
+          "address",
+          "source",
+          "downloadRate",
+          "connected"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "client": {
+            "type": "string"
+          },
+          "downloadRate": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          },
+          "connected": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimePieceRun": {
+        "type": "object",
+        "required": [
+          "length",
+          "state",
+          "complete",
+          "partial",
+          "hashing",
+          "queuedHash",
+          "priority"
+        ],
+        "properties": {
+          "length": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "$ref": "#/components/schemas/PieceRunState"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "partial": {
+            "type": "boolean"
+          },
+          "hashing": {
+            "type": "boolean"
+          },
+          "queuedHash": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "string",
+            "description": "Known values are none, normal, high, readahead, next, and now. Unknown numeric priorities are serialized as decimal strings."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PieceRunState": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "hashing",
+          "queued_hash",
+          "partial",
+          "empty"
+        ]
+      },
+      "RuntimeDHTServer": {
+        "type": "object",
+        "required": [
+          "id",
+          "address",
+          "nodes",
+          "goodNodes",
+          "outstandingTransactions",
+          "outboundQueriesAttempted",
+          "successfulOutboundAnnouncePeers",
+          "badNodes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "goodNodes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outstandingTransactions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outboundQueriesAttempted": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "successfulOutboundAnnouncePeers": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "badNodes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimeTorrentEvent": {
+        "type": "object",
+        "required": [
+          "time",
+          "type"
+        ],
+        "properties": {
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "type": {
+            "type": "string"
+          },
+          "infoHash": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "client": {
+            "type": "string"
+          },
+          "piece": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "begin": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "dhtQuery": {
+            "type": "string"
+          },
+          "dhtNode": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileItem": {
+        "type": "object",
+        "required": [
+          "path",
+          "bytes",
+          "completedBytes",
+          "savePath",
+          "status"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "completedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "savePath": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FileStatus"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileStatus": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "downloading",
+          "complete"
+        ]
+      }
+    }
+  }
+}
