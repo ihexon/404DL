@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"4dl/internal/logging"
+	"4dl/internal/magnet"
 	"4dl/internal/model"
 )
 
@@ -130,8 +130,8 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Sea
 	}
 
 	rawCount := len(merged)
-	merged = dedupe(merged)
-	afterDedupe := len(merged)
+	merged = normalizeResults(merged)
+	afterNormalize := len(merged)
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].Seeders > merged[j].Seeders
 	})
@@ -146,8 +146,8 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]model.Sea
 		"query":              req.Query,
 		"limit":              req.Limit,
 		"raw_results":        rawCount,
-		"deduped_results":    afterDedupe,
-		"duplicates_removed": rawCount - afterDedupe,
+		"normalized_results": afterNormalize,
+		"items_removed":      rawCount - afterNormalize,
 		"returned":           len(merged),
 		"limit_applied":      limited,
 		"errors":             len(errs),
@@ -218,52 +218,48 @@ func sortedProviderNames(providers []Provider) []string {
 	return names
 }
 
-func dedupe(results []model.SearchResult) []model.SearchResult {
+func normalizeResults(results []model.SearchResult) []model.SearchResult {
 	positions := make(map[string]int, len(results))
-	deduped := make([]model.SearchResult, 0, len(results))
+	normalized := make([]model.SearchResult, 0, len(results))
 	for _, result := range results {
+		result = normalizeResult(result)
 		key := dedupeKey(result)
 		if key == "" {
-			deduped = append(deduped, result)
 			continue
 		}
 		pos, ok := positions[key]
 		if ok {
-			if result.Seeders > deduped[pos].Seeders {
-				deduped[pos] = result
+			if result.Seeders > normalized[pos].Seeders {
+				normalized[pos] = result
 			}
 			continue
 		}
-		positions[key] = len(deduped)
-		deduped = append(deduped, result)
+		positions[key] = len(normalized)
+		normalized = append(normalized, result)
 	}
-	return deduped
+	return normalized
+}
+
+func normalizeResult(result model.SearchResult) model.SearchResult {
+	result.Hash = normalizeHashPtr(result.Hash)
+	result.MagnetURL = magnet.NormalizeURLPtr(result.MagnetURL)
+	return result
+}
+
+func normalizeHashPtr(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	normalized := strings.ToLower(strings.TrimSpace(*value))
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
 }
 
 func dedupeKey(result model.SearchResult) string {
 	if result.Hash != nil {
-		hash := strings.TrimSpace(*result.Hash)
-		if hash != "" {
-			return "hash:" + strings.ToLower(hash)
-		}
+		return "hash:" + *result.Hash
 	}
-	if result.MagnetURL != nil {
-		magnetURL := strings.TrimSpace(*result.MagnetURL)
-		if magnetURL != "" {
-			return "magnet:" + strings.ToLower(magnetURL)
-		}
-	}
-	title := strings.ToLower(strings.TrimSpace(result.Title))
-	if title == "" {
-		return ""
-	}
-	parts := []string{
-		"result",
-		strings.ToLower(strings.TrimSpace(result.Provider)),
-		title,
-	}
-	if result.Bytes > 0 {
-		parts = append(parts, strconv.FormatInt(result.Bytes, 10))
-	}
-	return strings.Join(parts, ":")
+	return ""
 }
