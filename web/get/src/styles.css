@@ -62,8 +62,7 @@ h1 {
 }
 
 .queryField,
-.limitField,
-.resultFilterField {
+.limitField {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -76,15 +75,13 @@ h1 {
 }
 
 .queryField:focus-within,
-.limitField:focus-within,
-.resultFilterField:focus-within {
+.limitField:focus-within {
   border-color: #0969da;
   box-shadow: 0 0 0 3px rgb(9 105 218 / 16%);
 }
 
 .queryField input,
-.limitField input,
-.resultFilterField input {
+.limitField input {
   min-width: 0;
   width: 100%;
   border: 0;
@@ -101,7 +98,7 @@ h1 {
 .listToolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
   margin-bottom: 10px;
 }
@@ -136,10 +133,6 @@ h1 {
 .viewTab.active {
   color: #0969da;
   background: #ddf4ff;
-}
-
-.resultFilterField {
-  min-width: 280px;
 }
 
 .banner {
@@ -779,10 +772,6 @@ h1 {
   .listToolbar {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .resultFilterField {
-    min-width: 0;
   }
 
   .viewTabs {

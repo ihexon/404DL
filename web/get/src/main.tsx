@@ -206,11 +206,9 @@ function App() {
     searchResults
   } = useTorrents();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [filter, setFilter] = useState("");
   const [view, setView] = useState<TorrentView>("search");
 
   const items = useMemo(() => torrentListItems(searchResults, downloads, view), [downloads, searchResults, view]);
-  const visibleItems = useMemo(() => filterTorrents(items, filter), [items, filter]);
 
   function toggle(item: TorrentListItem) {
     const willOpen = !expanded[item.id];
@@ -255,18 +253,10 @@ function App() {
           <ViewTab current={view} onChange={setView} value="downloading">Downloading</ViewTab>
           <ViewTab current={view} onChange={setView} value="complete">Complete</ViewTab>
         </div>
-        <label className="resultFilterField">
-          <Search size={16} />
-          <input
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter current list"
-          />
-        </label>
       </div>
 
       <TorrentList
-        items={visibleItems}
+        items={items}
         inFlightCommands={inFlightCommands}
         expanded={expanded}
         onTorrentAction={runListAction}
@@ -1242,22 +1232,6 @@ function searchResultListItem(result: SearchResult): TorrentListItem {
     source: "search",
     searchResult: result
   };
-}
-
-function filterTorrents(items: TorrentListItem[], filter: string): TorrentListItem[] {
-  const needle = filter.trim().toLowerCase();
-  return items.filter((item) => {
-    if (!needle) {
-      return true;
-    }
-    return [
-      item.title,
-      item.provider,
-      item.hash ?? "",
-      item.magnetUrl ?? "",
-      item.category ?? ""
-    ].some((value) => value.toLowerCase().includes(needle));
-  });
 }
 
 function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): TorrentState {
