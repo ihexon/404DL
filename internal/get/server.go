@@ -10,16 +10,20 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/swaggest/swgui/v5emb"
 
 	"4dl/internal/logging"
+	"4dl/internal/model"
+	"4dl/internal/provider"
 )
 
 const (
 	defaultTorrentListenAddr = ":0"
+	defaultSearchLimit       = 50
 	openAPISpecContentType   = "application/vnd.oai.openapi+json; charset=utf-8"
 	slowRequestThreshold     = 2 * time.Second
 )
@@ -29,18 +33,14 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = "127.0.0.1:0"
 	}
-	if cfg.InputPath == "" {
-		cfg.InputPath = "-"
-	}
 	if cfg.TorrentListenAddr == "" {
 		cfg.TorrentListenAddr = defaultTorrentListenAddr
 	}
-
-	items, err := loadSearchResults(cfg.InputPath, cfg.CryptoKey)
-	if err != nil {
-		return err
+	if cfg.DefaultLimit <= 0 {
+		cfg.DefaultLimit = defaultSearchLimit
 	}
-	manager, err := NewManager(items, cfg.SaveTo, cfg.TorrentListenAddr)
+
+	manager, err := NewManager(nil, cfg.SaveTo, cfg.TorrentListenAddr)
 	if err != nil {
 		return err
 	}
@@ -51,8 +51,11 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("init static fs: %w", err)
 	}
 	server := &Server{
-		manager:  manager,
-		staticFS: staticFS,
+		manager:      manager,
+		staticFS:     staticFS,
+		searcher:     cfg.Searcher,
+		defaultLimit: cfg.DefaultLimit,
+		stateChanged: make(chan struct{}),
 	}
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -63,12 +66,11 @@ func Run(ctx context.Context, cfg Config) error {
 	logrus.WithFields(logrus.Fields{
 		"listen":         listener.Addr().String(),
 		"web_url":        "http://" + listener.Addr().String(),
-		"items":          len(items),
-		"input":          inputLabel(cfg.InputPath),
+		"items":          0,
 		"save_to":        cfg.SaveTo,
 		"torrent_listen": cfg.TorrentListenAddr,
 		"duration_ms":    logging.DurationMillis(time.Since(startedAt)),
-	}).Info("get server listening")
+	}).Info("web server listening")
 	httpServer := &http.Server{Handler: server.routes()}
 	go func() {
 		<-ctx.Done()
@@ -81,26 +83,35 @@ func Run(ctx context.Context, cfg Config) error {
 	}()
 	err = httpServer.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
-		logrus.Info("get server stopped")
+		logrus.Info("web server stopped")
 		return nil
 	}
-	logrus.WithError(err).Error("get server stopped unexpectedly")
+	logrus.WithError(err).Error("web server stopped unexpectedly")
 	return err
 }
 
 type Server struct {
-	manager  *Manager
-	staticFS fs.FS
+	manager       *Manager
+	staticFS      fs.FS
+	searcher      Searcher
+	defaultLimit  int
+	searchMu      sync.Mutex
+	searchResults []model.SearchResult
+	stateMu       sync.Mutex
+	stateChanged  chan struct{}
 }
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/healthz", s.handleHealth)
 	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPI)
-	mux.Handle("GET /api/docs/", v5emb.New("404 Downloader Get API", "/api/openapi.json", "/api/docs/"))
+	mux.Handle("GET /api/docs/", v5emb.New("404 Downloader API", "/api/openapi.json", "/api/docs/"))
 	mux.HandleFunc("GET /api/docs", redirectToDocs)
+	mux.HandleFunc("POST /api/search", s.handleSearch)
 	mux.HandleFunc("GET /api/torrents", s.handleListTorrents)
+	mux.HandleFunc("POST /api/torrents", s.handleCreateDownload)
 	mux.HandleFunc("GET /api/torrents/stream", s.handleStreamTorrents)
+	mux.HandleFunc("GET /api/torrents/stream2", s.handleTorrentStreamSnapshot)
 	mux.HandleFunc("GET /api/torrents/{id}", s.handleGetTorrent)
 	mux.HandleFunc("POST /api/torrents/{id}/start", s.handleStartDownload)
 	mux.HandleFunc("POST /api/torrents/{id}/pause", s.handlePauseDownload)
@@ -123,12 +134,99 @@ func redirectToDocs(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/api/docs/", http.StatusMovedPermanently)
 }
 
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if s.searcher == nil {
+		writeJSON(w, http.StatusServiceUnavailable, APIError{Error: "search is not configured"})
+		return
+	}
+	req, ok := s.parseSearchRequestBody(w, r)
+	if !ok {
+		return
+	}
+	s.setSearchResults(nil)
+	s.notifyStateChanged()
+	results, err := s.searcher.Search(r.Context(), provider.SearchRequest{
+		Query:     req.Query,
+		Limit:     req.Limit,
+		Providers: req.Providers,
+	})
+	if err != nil {
+		if errors.Is(err, provider.ErrUnknownProvider) {
+			writeJSON(w, http.StatusBadRequest, APIError{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, APIError{Error: err.Error()})
+		return
+	}
+	s.setSearchResults(results)
+	s.notifyStateChanged()
+	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) parseSearchRequestBody(w http.ResponseWriter, r *http.Request) (SearchRequest, bool) {
+	var req SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, APIError{Error: "invalid JSON request body"})
+		return SearchRequest{}, false
+	}
+	req.Query = strings.TrimSpace(req.Query)
+	req.Providers = normalizedValues(req.Providers)
+	if req.Query == "" {
+		writeJSON(w, http.StatusBadRequest, APIError{Error: "query is required"})
+		return SearchRequest{}, false
+	}
+	if req.Limit < 0 {
+		writeJSON(w, http.StatusBadRequest, APIError{Error: "limit must be a positive integer"})
+		return SearchRequest{}, false
+	}
+	if req.Limit == 0 {
+		req.Limit = s.defaultLimit
+	}
+	return req, true
+}
+
+func normalizedValues(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
 func (s *Server) handleListTorrents(w http.ResponseWriter, r *http.Request) {
-	state := s.manager.State(r.Context())
+	state := s.appState(r.Context())
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
 		"count": len(state.Torrents),
 	})).Debug("get torrent list returned")
 	writeJSON(w, http.StatusOK, state)
+}
+
+func (s *Server) handleCreateDownload(w http.ResponseWriter, r *http.Request) {
+	var req CreateDownloadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, APIError{Error: "invalid JSON request body"})
+		return
+	}
+	state, err := s.manager.ImportSearchResult(req.Result)
+	if err != nil {
+		if errors.Is(err, errSearchResultMissingHash) {
+			writeJSON(w, http.StatusBadRequest, APIError{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
+		return
+	}
+	s.notifyStateChanged()
+	writeJSON(w, http.StatusCreated, state)
 }
 
 func (s *Server) handleStreamTorrents(w http.ResponseWriter, r *http.Request) {
@@ -145,15 +243,25 @@ func (s *Server) handleStreamTorrents(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		stateChanged := s.stateChangeChan()
 		select {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			if !s.writeTorrentListEvent(w, rc, r) {
-				return
-			}
+		case <-stateChanged:
+		}
+		if !s.writeTorrentListEvent(w, rc, r) {
+			return
 		}
 	}
+}
+
+func (s *Server) handleTorrentStreamSnapshot(w http.ResponseWriter, r *http.Request) {
+	state := s.appState(r.Context())
+	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+		"count": len(state.Torrents),
+	})).Debug("get torrent stream snapshot returned")
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (s *Server) handleGetTorrent(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +285,7 @@ func setSSEHeaders(w http.ResponseWriter) {
 }
 
 func (s *Server) writeTorrentListEvent(w http.ResponseWriter, rc *http.ResponseController, r *http.Request) bool {
-	state := s.manager.State(r.Context())
+	state := s.appState(r.Context())
 	if err := writeSSE(w, "state", state); err != nil {
 		logrus.WithError(err).WithFields(logging.MergeFields(r.Context(), logrus.Fields{})).Warn("get torrent list stream write failed")
 		return false
@@ -187,6 +295,27 @@ func (s *Server) writeTorrentListEvent(w http.ResponseWriter, rc *http.ResponseC
 		return false
 	}
 	return true
+}
+
+func (s *Server) appState(ctx context.Context) AppState {
+	state := s.manager.State(ctx)
+	state.SearchResults = s.currentSearchResults()
+	return state
+}
+
+func (s *Server) setSearchResults(results []model.SearchResult) {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	s.searchResults = append([]model.SearchResult(nil), results...)
+}
+
+func (s *Server) currentSearchResults() []model.SearchResult {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	if s.searchResults == nil {
+		return []model.SearchResult{}
+	}
+	return append([]model.SearchResult(nil), s.searchResults...)
 }
 
 func (s *Server) handleStartDownload(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +332,7 @@ func (s *Server) handleStartDownload(w http.ResponseWriter, r *http.Request) {
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
 		"id": id,
 	})).Info("get torrent download started")
+	s.notifyStateChanged()
 	writeTorrentState(w, r, s.manager, id, http.StatusAccepted)
 }
 
@@ -220,6 +350,7 @@ func (s *Server) handlePauseDownload(w http.ResponseWriter, r *http.Request) {
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
 		"id": id,
 	})).Info("get torrent download paused")
+	s.notifyStateChanged()
 	writeTorrentState(w, r, s.manager, id, http.StatusOK)
 }
 
@@ -237,7 +368,28 @@ func (s *Server) handleDeleteDownload(w http.ResponseWriter, r *http.Request) {
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
 		"id": id,
 	})).Info("get torrent download deleted")
+	s.notifyStateChanged()
 	writeTorrentState(w, r, s.manager, id, http.StatusOK)
+}
+
+func (s *Server) stateChangeChan() <-chan struct{} {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.stateChanged == nil {
+		s.stateChanged = make(chan struct{})
+	}
+	return s.stateChanged
+}
+
+func (s *Server) notifyStateChanged() {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+
+	if s.stateChanged == nil {
+		s.stateChanged = make(chan struct{})
+	}
+	close(s.stateChanged)
+	s.stateChanged = make(chan struct{})
 }
 
 func writeTorrentState(w http.ResponseWriter, r *http.Request, manager *Manager, torrentID string, status int) {

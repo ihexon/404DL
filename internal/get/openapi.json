@@ -1,14 +1,14 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "404 Downloader Get API",
+    "title": "404 Downloader API",
     "version": "1.0.0",
-    "description": "Local HTTP API used by the in-process 404 Downloader get web UI. This API is intended for the local browser session started by the get command, not as a public external service contract."
+    "description": "Local HTTP API used by the in-process 404 Downloader web UI. This API is intended for the local browser session started by 4dl, not as a public external service contract."
   },
   "servers": [
     {
       "url": "/",
-      "description": "Current local get server"
+      "description": "Current local web server"
     }
   ],
   "paths": {
@@ -18,7 +18,7 @@
         "summary": "Health check",
         "responses": {
           "200": {
-            "description": "The local get server is ready to accept requests.",
+            "description": "The local web server is ready to accept requests.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36,7 +36,7 @@
         "summary": "OpenAPI specification",
         "responses": {
           "200": {
-            "description": "The OpenAPI specification for the local get API.",
+            "description": "The OpenAPI specification for the local API.",
             "content": {
               "application/vnd.oai.openapi+json": {
                 "schema": {
@@ -49,6 +49,47 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/search": {
+      "post": {
+        "operationId": "searchTorrents",
+        "summary": "Search torrents",
+        "description": "Searches configured providers, stores the returned candidates as the current search result list, and emits an SSE state update. This does not create download tasks and does not add torrents to anacrolix/torrent.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search results sorted by seeders descending. Results without hash are dropped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SearchResult"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "502": {
+            "$ref": "#/components/responses/ProviderError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -70,13 +111,46 @@
             }
           }
         }
+      },
+      "post": {
+        "operationId": "createDownload",
+        "summary": "Create download",
+        "description": "Creates a local download task from a selected search result. This is the first point where a search candidate becomes managed download state; result.hash is required and is the only dedupe key.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDownloadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Download task created, or an existing task with the same hash returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TorrentState"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
       }
     },
     "/api/torrents/stream": {
       "get": {
         "operationId": "streamTorrents",
         "summary": "Stream torrent state (SSE)",
-        "description": "Streams AppState snapshots as Server-Sent Events. The server emits a state event immediately after connection and then roughly once per second until the request is closed or writing fails.\n\nSwagger UI cannot reliably Try it out because this response is a long-lived text/event-stream. Use curl -N /api/torrents/stream or browser EventSource instead.",
+        "description": "Streams AppState snapshots as Server-Sent Events. The server emits a state event immediately after connection, after torrent state changes, and roughly once per second as a fallback until the request is closed or writing fails.\n\nSwagger UI cannot reliably Try it out because this response is a long-lived text/event-stream. Use curl -N /api/torrents/stream or browser EventSource instead.",
         "responses": {
           "200": {
             "description": "Server-Sent Events stream. Each event uses event name state and a JSON AppState payload in data.",
@@ -121,6 +195,25 @@
         }
       }
     },
+    "/api/torrents/stream2": {
+      "get": {
+        "operationId": "getTorrentStreamSnapshot",
+        "summary": "Get torrent stream snapshot",
+        "description": "Returns the same AppState payload shape used by each /api/torrents/stream SSE state event, but as a single application/json response. This endpoint is intended for clients and agents that want the current stream state without opening an SSE connection.",
+        "responses": {
+          "200": {
+            "description": "Current AppState snapshot in the same shape as an SSE state event data payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppState"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/torrents/{id}": {
       "get": {
         "operationId": "getTorrent",
@@ -152,7 +245,7 @@
       "post": {
         "operationId": "startTorrentDownload",
         "summary": "Start torrent download",
-        "description": "Starts or resumes the torrent. The current implementation waits for metadata before returning, so this request may block for a while.",
+        "description": "Starts or resumes the torrent. This is a long-running control action: the current implementation returns 202 Accepted on success, but may wait for torrent metadata before sending that response. Automation and AI agents should not treat the 202 response as completion of the download. Use a client-side timeout appropriate for metadata lookup, then observe progress through GET /api/torrents/{id} or the /api/torrents/stream SSE endpoint.",
         "parameters": [
           {
             "$ref": "#/components/parameters/TorrentID"
@@ -277,6 +370,16 @@
       }
     },
     "responses": {
+      "BadRequest": {
+        "description": "The request was invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            }
+          }
+        }
+      },
       "TorrentNotFound": {
         "description": "Torrent was not found.",
         "content": {
@@ -292,6 +395,26 @@
       },
       "Conflict": {
         "description": "The requested torrent operation could not be completed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            }
+          }
+        }
+      },
+      "ProviderError": {
+        "description": "One or more search providers failed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Search is not configured.",
         "content": {
           "application/json": {
             "schema": {
@@ -327,11 +450,94 @@
         },
         "additionalProperties": false
       },
+      "SearchRequest": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum number of results to return. Defaults to the server limit when omitted or zero."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Provider names to query. Omit or pass an empty array to search all configured providers."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateDownloadRequest": {
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "$ref": "#/components/schemas/SearchResult"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SearchResult": {
+        "type": "object",
+        "required": [
+          "provider",
+          "title",
+          "hash",
+          "seeders",
+          "peers"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "category": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "seeders": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "peers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hash": {
+            "type": "string",
+            "description": "BitTorrent info hash. Search results without hash are not returned."
+          },
+          "magnetUrl": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "AppState": {
         "type": "object",
         "required": [
           "updated",
           "saveTo",
+          "searchResults",
           "torrents"
         ],
         "properties": {
@@ -343,6 +549,13 @@
           "saveTo": {
             "type": "string",
             "description": "Download save directory."
+          },
+          "searchResults": {
+            "type": "array",
+            "description": "Current search candidates. These are not download tasks and are not added to anacrolix/torrent until selected for download.",
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            }
           },
           "torrents": {
             "type": "array",
@@ -397,7 +610,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "BitTorrent v1 info hash when available."
+            "description": "BitTorrent info hash. Required for search results added through POST /api/torrents."
           },
           "magnetUrl": {
             "type": "string",
@@ -467,7 +680,7 @@
           },
           "hash": {
             "type": "string",
-            "description": "BitTorrent v1 info hash when available."
+            "description": "BitTorrent info hash. Required for search results added through POST /api/torrents."
           },
           "magnetUrl": {
             "type": "string",

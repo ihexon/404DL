@@ -23,9 +23,11 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"4dl/internal/logging"
+	"4dl/internal/model"
 )
 
 var errManagerClosed = errors.New("get manager closed")
+var errSearchResultMissingHash = errors.New("search result missing hash")
 
 type Manager struct {
 	saveTo  string
@@ -184,6 +186,33 @@ func (m *Manager) List() []TorrentItem {
 		return strings.ToLower(out[i].Title) < strings.ToLower(out[j].Title)
 	})
 	return out
+}
+
+func (m *Manager) ImportSearchResult(result model.SearchResult) (TorrentState, error) {
+	item, err := torrentItemFromSearchResult(result)
+	if err != nil {
+		return TorrentState{}, err
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return TorrentState{}, errManagerClosed
+	}
+	if existing, ok := m.items[item.ID]; ok {
+		item = m.cloneItemLocked(existing)
+		m.mu.Unlock()
+		return TorrentState{
+			TorrentItem: item,
+			Runtime:     m.runtimeView(item.ID),
+		}, nil
+	}
+	m.items[item.ID] = &item
+	out := m.cloneItemLocked(&item)
+	m.mu.Unlock()
+	return TorrentState{
+		TorrentItem: out,
+		Runtime:     m.runtimeView(out.ID),
+	}, nil
 }
 
 func (m *Manager) Get(id string) (TorrentItem, bool) {

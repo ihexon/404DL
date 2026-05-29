@@ -1,15 +1,36 @@
 package get
 
+import (
+	"context"
+
+	"4dl/internal/model"
+	"4dl/internal/provider"
+)
+
 type Config struct {
 	ListenAddr        string
-	InputPath         string
 	SaveTo            string
 	TorrentListenAddr string
-	CryptoKey         string
+	Searcher          Searcher
+	DefaultLimit      int
 }
 
 type HealthResponse struct {
 	Status string `json:"status"`
+}
+
+type Searcher interface {
+	Search(context.Context, provider.SearchRequest) ([]model.SearchResult, error)
+}
+
+type SearchRequest struct {
+	Query     string   `json:"query"`
+	Limit     int      `json:"limit,omitempty"`
+	Providers []string `json:"providers,omitempty"`
+}
+
+type CreateDownloadRequest struct {
+	Result model.SearchResult `json:"result"`
 }
 
 type FileStatus string
@@ -53,9 +74,10 @@ type DownloadView struct {
 }
 
 type AppState struct {
-	Updated  string         `json:"updated"`
-	SaveTo   string         `json:"saveTo"`
-	Torrents []TorrentState `json:"torrents"`
+	Updated       string               `json:"updated"`
+	SaveTo        string               `json:"saveTo"`
+	SearchResults []model.SearchResult `json:"searchResults"`
+	Torrents      []TorrentState       `json:"torrents"`
 }
 
 type TorrentState struct {

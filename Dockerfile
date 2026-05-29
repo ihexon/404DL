@@ -14,7 +14,9 @@ FROM alpine:3.22
 
 RUN apk add --no-cache ca-certificates \
 	&& addgroup -S fourdl \
-	&& adduser -S -G fourdl fourdl
+	&& adduser -S -G fourdl fourdl \
+	&& mkdir -p /app/downloads \
+	&& chown -R fourdl:fourdl /app
 
 USER fourdl
 WORKDIR /app
@@ -24,4 +26,4 @@ COPY --from=build /out/4dl /usr/local/bin/4dl
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/4dl"]
-CMD ["server", "--listen", ":8080"]
+CMD ["--listen", ":8080", "--save-to", "/app/downloads"]

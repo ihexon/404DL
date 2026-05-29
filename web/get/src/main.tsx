@@ -48,9 +48,22 @@ type TorrentItem = {
   files?: FileItem[];
 };
 
+type SearchResult = {
+  provider: string;
+  title: string;
+  bytes?: number;
+  category?: string;
+  date?: string;
+  seeders: number;
+  peers: number;
+  hash?: string;
+  magnetUrl?: string;
+};
+
 type AppState = {
   updated: string;
   saveTo: string;
+  searchResults: SearchResult[];
   torrents: TorrentState[];
 };
 
@@ -64,6 +77,11 @@ type TorrentState = TorrentItem & {
   runtime: RuntimeView;
 };
 
+type TorrentListItem = TorrentState & {
+  source: "download" | "search";
+  searchResult?: SearchResult;
+};
+
 type RuntimeView = {
   status: "inactive" | "ready" | "error";
   snapshot?: RuntimeSnapshot;
@@ -71,9 +89,11 @@ type RuntimeView = {
 };
 
 type TorrentStore = {
-  items: TorrentState[];
+  downloads: TorrentState[];
   error: string;
   inFlightCommands: Set<string>;
+  searchResults: SearchResult[];
+  downloadSearchResult: (result: SearchResult) => Promise<void>;
   loadTorrent: (id: string) => Promise<void>;
   runTorrentAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
 };
@@ -155,7 +175,7 @@ type RuntimeTorrentEvent = {
 };
 
 type TorrentAction = "start" | "pause" | "delete";
-type DownloadFilter = "all" | "downloading" | "complete";
+type TorrentView = "search" | "downloading" | "complete";
 
 class HTTPError extends Error {
   readonly status: number;
@@ -176,51 +196,80 @@ const pieceGridOverscanRows = 4;
 const fallbackPieceMapColumns = 32;
 
 function App() {
-  const { items, error, inFlightCommands, loadTorrent, runTorrentAction } = useTorrents();
+  const {
+    downloads,
+    downloadSearchResult,
+    error,
+    inFlightCommands,
+    loadTorrent,
+    runTorrentAction,
+    searchResults
+  } = useTorrents();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState("");
-  const [downloadFilter, setDownloadFilter] = useState<DownloadFilter>("all");
+  const [view, setView] = useState<TorrentView>("search");
 
-  const visibleItems = useMemo(() => filterTorrents(items, filter, downloadFilter), [items, filter, downloadFilter]);
+  const items = useMemo(() => torrentListItems(searchResults, downloads, view), [downloads, searchResults, view]);
+  const visibleItems = useMemo(() => filterTorrents(items, filter), [items, filter]);
 
-  function toggle(item: TorrentState) {
+  function toggle(item: TorrentListItem) {
     const willOpen = !expanded[item.id];
     setExpanded((current) => ({ ...current, [item.id]: willOpen }));
-    if (!willOpen) {
+    if (!willOpen || item.source !== "download") {
       return;
     }
     void loadTorrent(item.id);
+  }
+
+  async function runListAction(item: TorrentListItem, action: TorrentAction) {
+    if (item.source === "search") {
+      if (action === "start" && item.searchResult) {
+        await downloadSearchResult(item.searchResult);
+      }
+      return;
+    }
+    await runTorrentAction(item, action);
   }
 
   return (
     <main className="shell">
       <header className="topbar">
         <div>
-          <h1>4dl get</h1>
-          <div className="meta">{items.length} torrents</div>
-        </div>
-        <label className="searchBox">
-          <Search size={16} />
-          <input
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter"
-          />
-        </label>
-        <div className="filterTabs" aria-label="Download status filter">
-          <FilterTab current={downloadFilter} onChange={setDownloadFilter} value="all">All</FilterTab>
-          <FilterTab current={downloadFilter} onChange={setDownloadFilter} value="downloading">Downloading</FilterTab>
-          <FilterTab current={downloadFilter} onChange={setDownloadFilter} value="complete">Complete</FilterTab>
+          <h1>4dl</h1>
+          <div className="meta">{downloads.length} downloads</div>
         </div>
       </header>
 
       {error && <div className="banner">{error}</div>}
 
+      <SearchPanel
+        onSearchStart={() => {
+          setView("search");
+          setExpanded({});
+        }}
+      />
+
+      <div className="listToolbar">
+        <div className="viewTabs" aria-label="Torrent view">
+          <ViewTab current={view} onChange={setView} value="search">Search</ViewTab>
+          <ViewTab current={view} onChange={setView} value="downloading">Downloading</ViewTab>
+          <ViewTab current={view} onChange={setView} value="complete">Complete</ViewTab>
+        </div>
+        <label className="resultFilterField">
+          <Search size={16} />
+          <input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Filter current list"
+          />
+        </label>
+      </div>
+
       <TorrentList
         items={visibleItems}
         inFlightCommands={inFlightCommands}
         expanded={expanded}
-        onTorrentAction={runTorrentAction}
+        onTorrentAction={runListAction}
         onToggle={toggle}
       />
     </main>
@@ -294,6 +343,31 @@ function useTorrents(): TorrentStore {
     [mergeTorrent, showServiceError]
   );
 
+  const downloadSearchResult = useCallback(
+    async (result: SearchResult) => {
+      if (!result.hash) {
+        return;
+      }
+      const commandKey = searchResultActionKey(result);
+      if (inFlightCommandsRef.current.has(commandKey)) {
+        return;
+      }
+      addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
+      setError("");
+      try {
+        const item = await postJSON<TorrentState>(torrentListEndpoint(), { result });
+        mergeTorrent(item);
+        const next = await postJSON<TorrentState>(torrentActionEndpoint(item.id, "start"), {});
+        mergeTorrent(next);
+      } catch (err) {
+        showServiceError(err);
+      } finally {
+        clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
+      }
+    },
+    [mergeTorrent, showServiceError]
+  );
+
   useEffect(() => {
     const source = new EventSource(torrentListStreamEndpoint());
     source.addEventListener("open", () => setError(""));
@@ -304,12 +378,69 @@ function useTorrents(): TorrentStore {
   }, [mergeAppState]);
 
   return {
-    items: state?.torrents ?? [],
+    downloads: state?.torrents ?? [],
     error,
     inFlightCommands,
+    searchResults: state?.searchResults ?? [],
+    downloadSearchResult,
     loadTorrent,
     runTorrentAction
   };
+}
+
+function SearchPanel({ onSearchStart }: { onSearchStart: () => void }) {
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(50);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = query.trim();
+    if (!normalized || searching) {
+      return;
+    }
+    setSearching(true);
+    setError("");
+    onSearchStart();
+    try {
+      await postJSON<SearchResult[]>(searchEndpoint(), { query: normalized, limit });
+    } catch (err) {
+      setError(serviceErrorMessage(err));
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  return (
+    <section className="queryPanel">
+      <form className="queryForm" onSubmit={(event) => { void submit(event); }}>
+        <label className="queryField">
+          <Search size={16} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search torrents"
+          />
+        </label>
+        <label className="limitField">
+          <span>Limit</span>
+          <input
+            min={1}
+            max={200}
+            type="number"
+            value={limit}
+            onChange={(event) => setLimit(Number(event.target.value) || 1)}
+          />
+        </label>
+        <button className="primaryButton" disabled={searching || query.trim() === ""} type="submit">
+          {searching ? <span className="spinner" aria-hidden="true" /> : <Search size={16} />}
+          <span>Search</span>
+        </button>
+      </form>
+      {error && <div className="inlineError">{error}</div>}
+    </section>
+  );
 }
 
 function TorrentList({
@@ -319,11 +450,11 @@ function TorrentList({
   onTorrentAction,
   onToggle
 }: {
-  items: TorrentState[];
+  items: TorrentListItem[];
   inFlightCommands: Set<string>;
   expanded: Record<string, boolean>;
-  onTorrentAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
-  onToggle: (item: TorrentState) => void;
+  onTorrentAction: (item: TorrentListItem, action: TorrentAction) => Promise<void>;
+  onToggle: (item: TorrentListItem) => void;
 }) {
   return (
     <section className="torrentList" aria-label="Torrents">
@@ -349,10 +480,10 @@ const TorrentCard = React.memo(function TorrentCard({
   onTorrentAction,
   onToggle
 }: {
-  item: TorrentState;
+  item: TorrentListItem;
   inFlightCommands: Set<string>;
   open: boolean;
-  onTorrentAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
+  onTorrentAction: (item: TorrentListItem, action: TorrentAction) => Promise<void>;
   onToggle: () => void;
 }) {
   return (
@@ -388,24 +519,28 @@ const TorrentCard = React.memo(function TorrentCard({
             inFlightCommands={inFlightCommands}
             item={item}
             onAction={onTorrentAction}
-            title={item.download.status === "paused" ? "Continue" : "Start"}
+            title={item.source === "search" ? "Start download" : item.download.status === "paused" ? "Continue" : "Start"}
           />
-          <TorrentActionButton
-            action="pause"
-            icon={<Pause size={16} />}
-            inFlightCommands={inFlightCommands}
-            item={item}
-            onAction={onTorrentAction}
-            title="Pause"
-          />
-          <TorrentActionButton
-            action="delete"
-            icon={<Trash2 size={16} />}
-            inFlightCommands={inFlightCommands}
-            item={item}
-            onAction={onTorrentAction}
-            title="Delete local data"
-          />
+          {item.source === "download" && (
+            <>
+              <TorrentActionButton
+                action="pause"
+                icon={<Pause size={16} />}
+                inFlightCommands={inFlightCommands}
+                item={item}
+                onAction={onTorrentAction}
+                title="Pause"
+              />
+              <TorrentActionButton
+                action="delete"
+                icon={<Trash2 size={16} />}
+                inFlightCommands={inFlightCommands}
+                item={item}
+                onAction={onTorrentAction}
+                title="Delete local data"
+              />
+            </>
+          )}
           {item.magnetUrl && (
             <CopyButton value={item.magnetUrl} title="Copy MagnetLink" variant="magnet" size={17} />
           )}
@@ -865,20 +1000,20 @@ function CodeBlock({
   );
 }
 
-function FilterTab({
+function ViewTab({
   children,
   current,
   onChange,
   value
 }: {
   children: React.ReactNode;
-  current: DownloadFilter;
-  onChange: (value: DownloadFilter) => void;
-  value: DownloadFilter;
+  current: TorrentView;
+  onChange: (value: TorrentView) => void;
+  value: TorrentView;
 }) {
   return (
     <button
-      className={`filterTab ${current === value ? "active" : ""}`}
+      className={`viewTab ${current === value ? "active" : ""}`}
       onClick={() => onChange(value)}
       type="button"
     >
@@ -918,11 +1053,13 @@ function TorrentActionButton({
   action: TorrentAction;
   icon: React.ReactNode;
   inFlightCommands: Set<string>;
-  item: TorrentState;
-  onAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
+  item: TorrentListItem;
+  onAction: (item: TorrentListItem, action: TorrentAction) => Promise<void>;
   title: string;
 }) {
-  const busy = inFlightCommands.has(torrentActionKey(item.id, action));
+  const commandKey = torrentActionKey(item.id, action);
+  const searchCommandKey = item.hash ? searchResultHashActionKey(item.hash) : "";
+  const busy = inFlightCommands.has(commandKey) || (action === "start" && searchCommandKey !== "" && inFlightCommands.has(searchCommandKey));
   const disabled = busy || !canRunTorrentAction(item, action);
   return (
     <button
@@ -936,9 +1073,12 @@ function TorrentActionButton({
   );
 }
 
-function canRunTorrentAction(item: TorrentState, action: TorrentAction): boolean {
-  if (!item.hash && !item.magnetUrl) {
+function canRunTorrentAction(item: TorrentListItem, action: TorrentAction): boolean {
+  if (!item.hash) {
     return false;
+  }
+  if (item.source === "search") {
+    return action === "start";
   }
   switch (action) {
     case "start":
@@ -1059,12 +1199,54 @@ function CopyButton({
   );
 }
 
-function filterTorrents(items: TorrentState[], filter: string, downloadFilter: DownloadFilter): TorrentState[] {
+function torrentListItems(searchResults: SearchResult[], downloads: TorrentState[], view: TorrentView): TorrentListItem[] {
+  if (view !== "search") {
+    return downloads
+      .filter((item) => item.download.status === view)
+      .map((item): TorrentListItem => ({ ...item, source: "download" }));
+  }
+  const downloadsByHash = new Map(downloads.map((item) => [item.hash, item]).filter(([hash]) => Boolean(hash)) as [string, TorrentState][]);
+  const currentSearchItems: TorrentListItem[] = [];
+  for (const result of searchResults) {
+    if (!result.hash) {
+      continue;
+    }
+    const download = downloadsByHash.get(result.hash);
+    currentSearchItems.push(download ? { ...download, source: "download" } : searchResultListItem(result));
+  }
+  return currentSearchItems;
+}
+
+function searchResultListItem(result: SearchResult): TorrentListItem {
+  const hash = result.hash || "";
+  return {
+    id: hash || `search:${result.provider}:${result.title}`,
+    title: result.title,
+    provider: result.provider,
+    bytes: result.bytes,
+    category: result.category,
+    date: result.date,
+    seeders: result.seeders,
+    peers: result.peers,
+    hash,
+    magnetUrl: result.magnetUrl,
+    downloading: false,
+    download: {
+      status: "idle",
+      completedBytes: 0,
+      bytes: result.bytes || 0
+    },
+    runtime: {
+      status: "inactive"
+    },
+    source: "search",
+    searchResult: result
+  };
+}
+
+function filterTorrents(items: TorrentListItem[], filter: string): TorrentListItem[] {
   const needle = filter.trim().toLowerCase();
   return items.filter((item) => {
-    if (downloadFilter !== "all" && item.download.status !== downloadFilter) {
-      return false;
-    }
     if (!needle) {
       return true;
     }
@@ -1091,6 +1273,17 @@ function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): To
 
 function torrentActionKey(id: string, action: TorrentAction): string {
   return `${id}\0${action}`;
+}
+
+function searchResultActionKey(result: SearchResult): string {
+  if (result.hash) {
+    return searchResultHashActionKey(result.hash);
+  }
+  return `download\0title:${result.provider}:${result.title}`;
+}
+
+function searchResultHashActionKey(hash: string): string {
+  return `download\0hash:${hash}`;
 }
 
 function addInFlightCommand(
@@ -1120,6 +1313,10 @@ function clearInFlightCommand(
 
 function torrentListEndpoint(): string {
   return "/api/torrents";
+}
+
+function searchEndpoint(): string {
+  return "/api/search";
 }
 
 function torrentListStreamEndpoint(): string {
