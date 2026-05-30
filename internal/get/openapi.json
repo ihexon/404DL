@@ -239,24 +239,59 @@
                         "$ref": "#/components/responses/TaskNotFound"
                     }
                 }
+            },
+            "delete": {
+                "operationId": "deleteTask",
+                "summary": "Delete task",
+                "description": "Cancels the task runtime and removes the persisted task. Pass force=true to also delete local payload data. For torrent folder tasks, force deletion removes the whole task folder, matching Gopeed behavior.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/TaskID"
+                    },
+                    {
+                        "name": "force",
+                        "in": "query",
+                        "required": false,
+                        "description": "When true, delete local payload data in addition to the task record. Defaults to false.",
+                        "schema": {
+                            "type": "boolean",
+                            "default": false
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Task deleted.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/TaskNotFound"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    }
+                }
             }
         },
-        "/api/tasks/{id}/start": {
-            "post": {
-                "operationId": "startTask",
-                "summary": "Start task download",
-                "description": "Starts or resumes the task. This is a long-running control action: the current implementation returns 202 Accepted on success, but may wait for torrent metadata before sending that response. Automation and AI agents should not treat the 202 response as completion of the download. Use a client-side timeout appropriate for metadata lookup, then observe progress through GET /api/tasks/{id} or the /api/tasks/stream SSE endpoint.",
+        "/api/tasks/{id}/continue": {
+            "put": {
+                "operationId": "continueTask",
+                "summary": "Continue task download",
+                "description": "Starts or resumes the task, matching Gopeed's continue task operation. This is a long-running control action: the current implementation returns 202 Accepted on success, but may wait for torrent metadata before sending that response. Automation and AI agents should not treat the 202 response as completion of the download. Use a client-side timeout appropriate for metadata lookup, then observe progress through GET /api/tasks/{id} or the /api/tasks/stream SSE endpoint.",
                 "parameters": [
                     {
                         "$ref": "#/components/parameters/TaskID"
                     }
                 ],
-                "requestBody": {
-                    "$ref": "#/components/requestBodies/EmptyJSON"
-                },
                 "responses": {
                     "202": {
-                        "description": "Download started or resumed.",
+                        "description": "Download continued.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -275,7 +310,7 @@
             }
         },
         "/api/tasks/{id}/pause": {
-            "post": {
+            "put": {
                 "operationId": "pauseTask",
                 "summary": "Pause task download",
                 "description": "Pauses an active task download. If the task has no active runtime, the API returns the current item state.",
@@ -284,45 +319,9 @@
                         "$ref": "#/components/parameters/TaskID"
                     }
                 ],
-                "requestBody": {
-                    "$ref": "#/components/requestBodies/EmptyJSON"
-                },
                 "responses": {
                     "200": {
                         "description": "Download paused or current state returned.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/TaskState"
-                                }
-                            }
-                        }
-                    },
-                    "404": {
-                        "$ref": "#/components/responses/TaskNotFound"
-                    },
-                    "409": {
-                        "$ref": "#/components/responses/Conflict"
-                    }
-                }
-            }
-        },
-        "/api/tasks/{id}/delete": {
-            "post": {
-                "operationId": "deleteTask",
-                "summary": "Delete downloaded data",
-                "description": "Cancels the task runtime, removes the persisted task, and attempts to delete final payload files and their .part files.",
-                "parameters": [
-                    {
-                        "$ref": "#/components/parameters/TaskID"
-                    }
-                ],
-                "requestBody": {
-                    "$ref": "#/components/requestBodies/EmptyJSON"
-                },
-                "responses": {
-                    "200": {
-                        "description": "Local download state deleted.",
                         "content": {
                             "application/json": {
                                 "schema": {

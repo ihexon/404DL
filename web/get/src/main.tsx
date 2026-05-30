@@ -96,7 +96,7 @@ type TaskStore = {
   searchResults: SearchResult[];
   createSearchResultTask: (result: SearchResult) => Promise<void>;
   loadTask: (id: string) => Promise<void>;
-  runTaskAction: (item: TaskState, action: TaskAction) => Promise<void>;
+  runTaskAction: (item: TaskState, action: TaskAction, options?: TaskActionOptions) => Promise<void>;
 };
 
 type RuntimeSnapshot = {
@@ -177,8 +177,13 @@ type RuntimeTaskEvent = {
   dhtNode?: string;
 };
 
-type TaskAction = "start" | "pause" | "delete";
+type TaskAction = "continue" | "pause" | "delete";
 type TaskView = "search" | "downloading" | "complete";
+type TaskActionOptions = {
+  force?: boolean;
+};
+
+const deleteKeepFilesKey = "4dl.delete.keepFiles";
 
 class HTTPError extends Error {
   readonly status: number;
@@ -210,6 +215,8 @@ function App() {
   } = useTasks();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [view, setView] = useState<TaskView>("search");
+  const [pendingDelete, setPendingDelete] = useState<TaskListItem | null>(null);
+  const [keepDeleteFiles, setKeepDeleteFiles] = useState(() => localStorage.getItem(deleteKeepFilesKey) !== "false");
 
   const items = useMemo(() => taskListItems(searchResults, downloads, view), [downloads, searchResults, view]);
   const downloadCount = useMemo(() => downloads.filter(isCountedDownload).length, [downloads]);
@@ -225,12 +232,26 @@ function App() {
 
   async function runListAction(item: TaskListItem, action: TaskAction) {
     if (item.source === "search") {
-      if (action === "start" && item.searchResult) {
+      if (action === "continue" && item.searchResult) {
         await createSearchResultTask(item.searchResult);
       }
       return;
     }
+    if (action === "delete") {
+      setPendingDelete(item);
+      return;
+    }
     await runTaskAction(item, action);
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) {
+      return;
+    }
+    localStorage.setItem(deleteKeepFilesKey, keepDeleteFiles ? "true" : "false");
+    const item = pendingDelete;
+    setPendingDelete(null);
+    await runTaskAction(item, "delete", { force: !keepDeleteFiles });
   }
 
   return (
@@ -266,6 +287,16 @@ function App() {
         onTaskAction={runListAction}
         onToggle={toggle}
       />
+
+      {pendingDelete && (
+        <DeleteTaskDialog
+          item={pendingDelete}
+          keepFiles={keepDeleteFiles}
+          onCancel={() => setPendingDelete(null)}
+          onChangeKeepFiles={setKeepDeleteFiles}
+          onConfirm={confirmDelete}
+        />
+      )}
     </main>
   );
 }
@@ -318,7 +349,7 @@ function useTasks(): TaskStore {
   }, []);
 
   const runTaskAction = useCallback(
-    async (item: TaskState, action: TaskAction) => {
+    async (item: TaskState, action: TaskAction, options: TaskActionOptions = {}) => {
       const commandKey = taskActionKey(item.id, action);
       if (inFlightCommandsRef.current.has(commandKey)) {
         return;
@@ -326,7 +357,7 @@ function useTasks(): TaskStore {
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const next = await postJSON<TaskState>(taskActionEndpoint(item.id, action), {});
+        const next = await requestJSON<TaskState>(taskActionEndpoint(item.id, action, options), taskActionMethod(action));
         mergeTask(next);
       } catch (err) {
         showServiceError(err);
@@ -351,7 +382,7 @@ function useTasks(): TaskStore {
       try {
         const item = await postJSON<TaskState>(taskListEndpoint(), { result });
         mergeTask(item);
-        const next = await postJSON<TaskState>(taskActionEndpoint(item.id, "start"), {});
+        const next = await requestJSON<TaskState>(taskActionEndpoint(item.id, "continue"), "PUT");
         mergeTask(next);
       } catch (err) {
         showServiceError(err);
@@ -508,12 +539,12 @@ const TaskCard = React.memo(function TaskCard({
 
         <div className="taskActions" onClick={(event) => event.stopPropagation()}>
           <TaskActionButton
-            action="start"
+            action="continue"
             icon={<Play size={16} />}
             inFlightCommands={inFlightCommands}
             item={item}
             onAction={onTaskAction}
-            title={item.source === "search" ? "Start download" : item.download.status === "paused" ? "Continue" : "Start"}
+            title={item.source === "search" ? "Create and continue" : "Continue"}
           />
           {item.source === "download" && (
             <>
@@ -531,7 +562,7 @@ const TaskCard = React.memo(function TaskCard({
                 inFlightCommands={inFlightCommands}
                 item={item}
                 onAction={onTaskAction}
-                title="Delete local data"
+                title="Delete task"
               />
             </>
           )}
@@ -1055,7 +1086,7 @@ function TaskActionButton({
 }) {
   const commandKey = taskActionKey(item.id, action);
   const searchCommandKey = item.hash ? searchResultHashActionKey(item.hash) : "";
-  const busy = inFlightCommands.has(commandKey) || (action === "start" && searchCommandKey !== "" && inFlightCommands.has(searchCommandKey));
+  const busy = inFlightCommands.has(commandKey) || (action === "continue" && searchCommandKey !== "" && inFlightCommands.has(searchCommandKey));
   const disabled = busy || !canRunTaskAction(item, action);
   return (
     <button
@@ -1069,20 +1100,66 @@ function TaskActionButton({
   );
 }
 
+function DeleteTaskDialog({
+  item,
+  keepFiles,
+  onCancel,
+  onChangeKeepFiles,
+  onConfirm
+}: {
+  item: TaskListItem;
+  keepFiles: boolean;
+  onCancel: () => void;
+  onChangeKeepFiles: (value: boolean) => void;
+  onConfirm: () => Promise<void>;
+}) {
+  return (
+    <div className="modalBackdrop" role="presentation" onMouseDown={onCancel}>
+      <section
+        aria-labelledby="deleteTaskTitle"
+        aria-modal="true"
+        className="modalPanel"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="modalHeader">
+          <Trash2 size={18} />
+          <h2 id="deleteTaskTitle">Delete task</h2>
+        </div>
+        <div className="deleteTaskName">{item.title}</div>
+        <label className="checkboxRow">
+          <input
+            checked={keepFiles}
+            onChange={(event) => onChangeKeepFiles(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          <span>Keep downloaded files</span>
+        </label>
+        <div className="modalActions">
+          <button className="secondaryButton" onClick={onCancel} type="button">Cancel</button>
+          <button className="dangerButton" onClick={() => { void onConfirm(); }} type="button">
+            {keepFiles ? "Delete task" : "Delete task and files"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function canRunTaskAction(item: TaskListItem, action: TaskAction): boolean {
   if (!item.hash) {
     return false;
   }
   if (item.source === "search") {
-    return action === "start";
+    return action === "continue";
   }
   switch (action) {
-    case "start":
+    case "continue":
       return item.download.status !== "downloading" && item.download.status !== "complete";
     case "pause":
       return item.download.status === "downloading";
     case "delete":
-      return item.download.status !== "idle" || (item.files ?? []).some((file) => file.completedBytes > 0);
+      return true;
   }
 }
 
@@ -1198,7 +1275,7 @@ function CopyButton({
 function taskListItems(searchResults: SearchResult[], downloads: TaskState[], view: TaskView): TaskListItem[] {
   if (view !== "search") {
     return downloads
-      .filter((item) => item.download.status === view)
+      .filter((item) => taskMatchesView(item, view))
       .map((item): TaskListItem => ({ ...item, source: "download" }));
   }
   const downloadsByHash = new Map(downloads.map((item) => [item.hash, item]).filter(([hash]) => Boolean(hash)) as [string, TaskState][]);
@@ -1211,6 +1288,13 @@ function taskListItems(searchResults: SearchResult[], downloads: TaskState[], vi
     currentSearchItems.push(download ? { ...download, source: "download" } : searchResultListItem(result));
   }
   return currentSearchItems;
+}
+
+function taskMatchesView(item: TaskState, view: Exclude<TaskView, "search">): boolean {
+  if (view === "downloading") {
+    return item.download.status === "downloading" || item.download.status === "paused";
+  }
+  return item.download.status === view;
 }
 
 function searchResultListItem(result: SearchResult): TaskListItem {
@@ -1312,8 +1396,19 @@ function taskEndpoint(id: string): string {
   return `/api/tasks/${encodeURIComponent(id)}`;
 }
 
-function taskActionEndpoint(id: string, action: TaskAction): string {
+function taskActionEndpoint(id: string, action: TaskAction, options: TaskActionOptions = {}): string {
+  if (action === "delete") {
+    const endpoint = taskEndpoint(id);
+    if (options.force === undefined) {
+      return endpoint;
+    }
+    return `${endpoint}?force=${options.force ? "true" : "false"}`;
+  }
   return `${taskEndpoint(id)}/${action}`;
+}
+
+function taskActionMethod(action: TaskAction): "PUT" | "DELETE" {
+  return action === "delete" ? "DELETE" : "PUT";
 }
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -1337,6 +1432,19 @@ async function postJSON<T>(url: string, body: unknown): Promise<T> {
       headers: { "Content-Type": "application/json" },
       method: "POST"
     });
+  } catch (err) {
+    throw new Error(`HTTP service unavailable: ${errorMessage(err)}`);
+  }
+  if (!response.ok) {
+    throw new HTTPError(response.status, await response.text());
+  }
+  return (await response.json()) as T;
+}
+
+async function requestJSON<T>(url: string, method: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { method });
   } catch (err) {
     throw new Error(`HTTP service unavailable: ${errorMessage(err)}`);
   }

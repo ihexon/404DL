@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/metainfo"
 	"github.com/sirupsen/logrus"
 
 	"4dl/internal/logging"
@@ -21,6 +22,7 @@ import (
 var errManagerClosed = errors.New("get manager closed")
 var errSearchResultMissingHash = errors.New("search result missing hash")
 var errTaskDeleting = errors.New("task deletion already in progress")
+var errTaskNotRunnable = errors.New("task is no longer runnable")
 
 type Manager struct {
 	downloadDir string
@@ -58,6 +60,14 @@ type taskDeletion struct {
 	item     TaskItem
 	runtime  torrentRuntime
 	filePath []string
+	rootPath string
+}
+
+type startedTorrentTask struct {
+	started bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	record  StoredTask
 }
 
 func NewManager(records []StoredTask, downloadDir, stateDir, torrentListenAddr string, store *taskStore) (*Manager, error) {
@@ -238,6 +248,13 @@ func (m *Manager) saveItemBestEffort(id string) {
 	m.saveStoredRecordBestEffort(record)
 }
 
+func (m *Manager) cloneTaskItem(item TaskItem) TaskItem {
+	if item.Files != nil {
+		item.Files = append([]FileItem(nil), item.Files...)
+	}
+	return item
+}
+
 func (m *Manager) List() []TaskItem {
 	m.mu.Lock()
 	out := make([]TaskItem, 0, len(m.items))
@@ -289,13 +306,33 @@ func (m *Manager) doCreate(item TaskItem) (TaskState, error) {
 			Runtime:  m.runtimeView(item.ID),
 		}, nil
 	}
-	m.items[item.ID] = &item
-	record := m.storedRecordLocked(&item)
+	record := StoredTask{
+		Item: m.cloneTaskItem(item),
+	}
 	out := record.Item
 	m.mu.Unlock()
 	if err := m.saveStoredRecord(record); err != nil {
 		return TaskState{}, err
 	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		if m.store != nil {
+			_ = m.store.Delete(out.ID)
+		}
+		return TaskState{}, errManagerClosed
+	}
+	if existing, ok := m.items[out.ID]; ok {
+		out = m.cloneItemLocked(existing)
+		m.mu.Unlock()
+		return TaskState{
+			TaskItem: out,
+			Runtime:  m.runtimeView(out.ID),
+		}, nil
+	}
+	item = out
+	m.items[out.ID] = &item
+	m.mu.Unlock()
 	return TaskState{
 		TaskItem: out,
 		Runtime:  m.runtimeView(out.ID),
@@ -494,10 +531,43 @@ func (m *Manager) cacheMetainfo(id string, t *torrent.Torrent) {
 }
 
 func (m *Manager) doStart(id string, t *torrent.Torrent) {
+	started, ok := m.prepareTorrentStart(id, t)
+	if !ok {
+		t.CancelPieces(0, int(t.NumPieces()))
+		t.DisallowDataUpload()
+		t.DisallowDataDownload()
+		t.Drop()
+		return
+	}
+	if !started.started {
+		return
+	}
+	m.saveStoredRecordBestEffort(started.record)
+
+	t.AllowDataUpload()
+	t.AllowDataDownload()
+	t.DownloadAll()
+	m.monitorTorrentDownload(started.ctx, id, t)
+}
+
+func (m *Manager) prepareTorrentStart(id string, t *torrent.Torrent) (startedTorrentTask, bool) {
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return startedTorrentTask{}, false
+	}
+	if _, ok := m.deleting[id]; ok {
+		m.mu.Unlock()
+		return startedTorrentTask{}, false
+	}
+	item, ok := m.items[id]
+	if !ok {
+		m.mu.Unlock()
+		return startedTorrentTask{}, false
+	}
 	if current, ok := m.downloads[id]; ok && current.Active {
 		m.mu.Unlock()
-		return
+		return startedTorrentTask{}, true
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	if current, ok := m.downloads[id]; ok && current.cancel != nil {
@@ -513,17 +583,16 @@ func (m *Manager) doStart(id string, t *torrent.Torrent) {
 		ctx:            ctx,
 		cancel:         cancel,
 	}
-	if item, ok := m.items[id]; ok {
-		item.Downloading = true
-		item.Download = m.downloadViewLocked(id, t)
-	}
+	item.Downloading = true
+	item.Download = m.downloadViewLocked(id, t)
+	record := m.storedRecordLocked(item)
 	m.mu.Unlock()
-	m.saveItemBestEffort(id)
-
-	t.AllowDataUpload()
-	t.AllowDataDownload()
-	t.DownloadAll()
-	m.monitorTorrentDownload(ctx, id, t)
+	return startedTorrentTask{
+		started: true,
+		ctx:     ctx,
+		cancel:  cancel,
+		record:  record,
+	}, true
 }
 
 func (m *Manager) PauseTask(ctx context.Context, id string) (TaskItem, bool, error) {
@@ -575,14 +644,20 @@ func (m *Manager) doPause(id string) (TaskItem, bool, error) {
 	return m.refreshFiles(id, t), true, nil
 }
 
-func (m *Manager) DeleteTask(ctx context.Context, id string) (TaskItem, bool, error) {
+func (m *Manager) DeleteTask(ctx context.Context, id string, force bool) (TaskItem, bool, error) {
 	deletion, ok, err := m.prepareTaskDeletion(id)
 	if !ok || err != nil {
 		return TaskItem{}, ok, err
 	}
-	if err := m.deleteTaskFiles(deletion); err != nil {
+	if err := m.closeTaskRuntime(&deletion); err != nil {
 		m.abortTaskDeletion(deletion)
 		return TaskItem{}, true, err
+	}
+	if force {
+		if err := m.deleteTaskFiles(deletion); err != nil {
+			m.abortTaskDeletion(deletion)
+			return TaskItem{}, true, err
+		}
 	}
 	if err := m.commitTaskDeletion(deletion); err != nil {
 		m.abortTaskDeletion(deletion)
@@ -645,15 +720,28 @@ func (m *Manager) prepareTaskDeletion(id string) (taskDeletion, bool, error) {
 }
 
 func (m *Manager) deleteTaskFiles(deletion taskDeletion) error {
-	paths := deletion.filePath
+	if deletion.rootPath != "" {
+		return removeSavedTree(deletion.rootPath)
+	}
+	if err := m.deleteFiles(deletion.filePath); err != nil {
+		return err
+	}
+	return pruneEmptyTaskDirs(deletion.item.Path, deletion.filePath)
+}
+
+func (m *Manager) closeTaskRuntime(deletion *taskDeletion) error {
 	if t := deletion.runtime.t; t != nil {
 		if t.Info() != nil {
-			paths = m.torrentFilePaths(deletion.item.Path, t)
+			paths := m.torrentFilePaths(deletion.item.Path, t)
 			m.cacheDeletionFilePaths(deletion.item.ID, paths)
+			deletion.rootPath = torrentRootPath(deletion.item.Path, t)
 		}
 		t.Drop()
 	}
-	return m.deleteFiles(paths)
+	if deletion.rootPath == "" {
+		deletion.rootPath = taskRootFromFilePaths(deletion.item.Path, deletion.filePath)
+	}
+	return nil
 }
 
 func (m *Manager) cacheDeletionFilePaths(id string, paths []string) {
@@ -803,11 +891,67 @@ func (m *Manager) torrentFilePaths(root string, t *torrent.Torrent) []string {
 	return paths
 }
 
+func torrentRootPath(root string, t *torrent.Torrent) string {
+	if t == nil || t.Info() == nil {
+		return ""
+	}
+	name := t.Info().BestName()
+	if name == "" || name == metainfo.NoName {
+		return ""
+	}
+	return filepath.Join(root, filepath.FromSlash(name))
+}
+
+func taskRootFromFilePaths(root string, paths []string) string {
+	if root == "" || len(paths) == 0 {
+		return ""
+	}
+	base, err := savedPath(root)
+	if err != nil {
+		return ""
+	}
+	var taskRoot string
+	for _, path := range paths {
+		fullPath, err := savedPath(path)
+		if err != nil {
+			return ""
+		}
+		rel, err := filepath.Rel(base, fullPath)
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			return ""
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) == 0 || parts[0] == "" || parts[0] == "." {
+			return ""
+		}
+		nextRoot := filepath.Join(base, parts[0])
+		if taskRoot == "" {
+			taskRoot = nextRoot
+			continue
+		}
+		if taskRoot != nextRoot {
+			return ""
+		}
+	}
+	return taskRoot
+}
+
 func (m *Manager) deleteFiles(paths []string) error {
 	for _, path := range paths {
 		if err := removeSavedPath(path); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func removeSavedTree(path string) error {
+	fullPath, err := savedPath(path)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(fullPath); err != nil {
+		return fmt.Errorf("delete saved path %q: %w", fullPath, err)
 	}
 	return nil
 }
@@ -826,6 +970,45 @@ func removeSavedPath(path string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("delete saved file %q: %w", fullPath, removeErr)
+}
+
+func pruneEmptyTaskDirs(root string, paths []string) error {
+	if root == "" {
+		return nil
+	}
+	base, err := savedPath(root)
+	if err != nil {
+		return err
+	}
+	dirs := make(map[string]struct{})
+	for _, path := range paths {
+		fullPath, err := savedPath(path)
+		if err != nil {
+			return err
+		}
+		dir := filepath.Dir(fullPath)
+		for {
+			rel, err := filepath.Rel(base, dir)
+			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				break
+			}
+			dirs[dir] = struct{}{}
+			dir = filepath.Dir(dir)
+		}
+	}
+	ordered := make([]string, 0, len(dirs))
+	for dir := range dirs {
+		ordered = append(ordered, dir)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		return len(ordered[i]) > len(ordered[j])
+	})
+	for _, dir := range ordered {
+		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+	}
+	return nil
 }
 
 func savedPath(path string) (string, error) {

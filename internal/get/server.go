@@ -132,9 +132,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/tasks/stream", s.handleStreamTasks)
 	mux.HandleFunc("GET /api/tasks/stream2", s.handleTaskStreamSnapshot)
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
-	mux.HandleFunc("POST /api/tasks/{id}/start", s.handleStartTask)
-	mux.HandleFunc("POST /api/tasks/{id}/pause", s.handlePauseTask)
-	mux.HandleFunc("POST /api/tasks/{id}/delete", s.handleDeleteTask)
+	mux.HandleFunc("PUT /api/tasks/{id}/continue", s.handleStartTask)
+	mux.HandleFunc("PUT /api/tasks/{id}/pause", s.handlePauseTask)
+	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return requestLogger(mux)
 }
@@ -375,7 +375,8 @@ func (s *Server) handlePauseTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	state, ok, err := s.manager.DeleteTask(r.Context(), id)
+	force := r.FormValue("force") == "true"
+	state, ok, err := s.manager.DeleteTask(r.Context(), id, force)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, APIError{Error: "task not found"})
 		return
@@ -385,7 +386,8 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
-		"id": id,
+		"id":    id,
+		"force": force,
 	})).Info("get task deleted")
 	s.notifyStateChanged()
 	writeJSON(w, http.StatusOK, TaskState{
