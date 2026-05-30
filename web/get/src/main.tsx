@@ -15,6 +15,7 @@ import {
   Play,
   RadioTower,
   Search,
+  Settings,
   Trash2,
   Users
 } from "lucide-react";
@@ -78,7 +79,22 @@ type TaskState = TaskItem & {
   runtime: RuntimeView;
 };
 
-type TaskListItem = TaskState;
+type SearchEntry =
+  | { kind: "task"; task: TaskState }
+  | { kind: "candidate"; result: SearchResult };
+
+type TaskHeaderData = {
+  title: string;
+  provider: string;
+  bytes?: number;
+  seeders: number;
+  peers: number;
+  date?: string;
+  category?: string;
+  hash?: string;
+  magnetUrl?: string;
+  status?: TaskStatus;
+};
 
 type RuntimeView = {
   status: "inactive" | "ready" | "error";
@@ -87,12 +103,13 @@ type RuntimeView = {
 };
 
 type TaskStore = {
+  downloadDir: string;
   downloads: TaskState[];
   error: string;
   inFlightCommands: Set<string>;
   searchResults: SearchResult[];
-  createMagnetTask: (magnetUrl: string) => Promise<TaskState | null>;
-  createSearchResultTask: (result: SearchResult) => Promise<void>;
+  createMagnetTask: (magnetUrl: string, options?: CreateTaskOptions) => Promise<TaskState | null>;
+  createSearchResultTask: (result: SearchResult, options?: CreateTaskOptions) => Promise<void>;
   loadTask: (id: string) => Promise<void>;
   runTaskAction: (item: TaskState, action: TaskAction, options?: TaskActionOptions) => Promise<void>;
   search: (query: string, limit: number) => Promise<void>;
@@ -177,12 +194,19 @@ type RuntimeTaskEvent = {
 };
 
 type TaskAction = "continue" | "pause" | "delete";
-type TaskView = "search" | "active" | "done";
+type TaskView = "search" | "active" | "done" | "settings";
+type AppSettings = {
+  newTaskPath: string;
+};
+type CreateTaskOptions = {
+  path?: string;
+};
 type TaskActionOptions = {
   force?: boolean;
 };
 
 const deleteKeepFilesKey = "4dl.delete.keepFiles";
+const settingsKey = "4dl.settings";
 
 class HTTPError extends Error {
   readonly status: number;
@@ -204,6 +228,7 @@ const fallbackPieceMapColumns = 32;
 
 function App() {
   const {
+    downloadDir,
     downloads,
     createMagnetTask,
     createSearchResultTask,
@@ -214,41 +239,57 @@ function App() {
     search,
     searchResults
   } = useTasks();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expandedEntryKeys, setExpandedEntryKeys] = useState<Record<string, boolean>>({});
   const [view, setView] = useState<TaskView>("active");
-  const [pendingDelete, setPendingDelete] = useState<TaskListItem | null>(null);
-  const [keepDeleteFiles, setKeepDeleteFiles] = useState(() => localStorage.getItem(deleteKeepFilesKey) !== "false");
+  const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  const [taskPendingDelete, setTaskPendingDelete] = useState<TaskState | null>(null);
+  const [keepFilesOnDelete, setKeepFilesOnDelete] = useState(() => localStorage.getItem(deleteKeepFilesKey) !== "false");
 
-  const items = useMemo(() => taskListItems(downloads, view), [downloads, view]);
+  const visibleTasks = useMemo(() => visibleTasksForView(downloads, view), [downloads, view]);
+  const searchEntries = useMemo(() => buildSearchEntries(searchResults, downloads), [searchResults, downloads]);
   const activeCount = useMemo(() => downloads.filter(isActiveTask).length, [downloads]);
   const doneCount = downloads.length - activeCount;
   const hasSearchResults = searchResults.length > 0;
+  const createOptions = useMemo<CreateTaskOptions>(
+    () => ({ path: settings.newTaskPath.trim() }),
+    [settings.newTaskPath]
+  );
 
-  function toggle(item: TaskListItem) {
-    const willOpen = !expanded[item.id];
-    setExpanded((current) => ({ ...current, [item.id]: willOpen }));
+  function toggleTaskDetails(item: TaskState) {
+    const key = taskEntryKey(item);
+    const willOpen = !expandedEntryKeys[key];
+    toggleEntry(key);
     if (!willOpen) {
       return;
     }
     void loadTask(item.id);
   }
 
-  async function runListAction(item: TaskListItem, action: TaskAction) {
+  function toggleEntry(key: string) {
+    setExpandedEntryKeys((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  async function runTaskEntryAction(item: TaskState, action: TaskAction) {
     if (action === "delete") {
-      setPendingDelete(item);
+      setTaskPendingDelete(item);
       return;
     }
     await runTaskAction(item, action);
   }
 
   async function confirmDelete() {
-    if (!pendingDelete) {
+    if (!taskPendingDelete) {
       return;
     }
-    localStorage.setItem(deleteKeepFilesKey, keepDeleteFiles ? "true" : "false");
-    const item = pendingDelete;
-    setPendingDelete(null);
-    await runTaskAction(item, "delete", { force: !keepDeleteFiles });
+    localStorage.setItem(deleteKeepFilesKey, keepFilesOnDelete ? "true" : "false");
+    const item = taskPendingDelete;
+    setTaskPendingDelete(null);
+    await runTaskAction(item, "delete", { force: !keepFilesOnDelete });
+  }
+
+  function changeSettings(next: AppSettings) {
+    setSettings(next);
+    saveSettings(next);
   }
 
   return (
@@ -263,10 +304,10 @@ function App() {
       {error && <div className="banner">{error}</div>}
 
       <CreatePanel
-        createMagnetTask={createMagnetTask}
+        createMagnetTask={(magnetUrl) => createMagnetTask(magnetUrl, createOptions)}
         onTaskCreated={(task) => {
           setView("active");
-          setExpanded((current) => ({ ...current, [task.id]: true }));
+          setExpandedEntryKeys((current) => ({ ...current, [taskEntryKey(task)]: true }));
           void loadTask(task.id);
         }}
         onSearchComplete={() => setView("search")}
@@ -279,31 +320,42 @@ function App() {
           <ViewTab current={view} disabled={!hasSearchResults} onChange={setView} value="search">Search</ViewTab>
           <ViewTab current={view} onChange={setView} value="active">Active</ViewTab>
           <ViewTab current={view} onChange={setView} value="done">Done</ViewTab>
+          <ViewTab current={view} onChange={setView} value="settings">Settings</ViewTab>
         </div>
       </div>
 
       {view === "search" ? (
-        <SearchWorkspace
+        <SearchView
+          expandedEntryKeys={expandedEntryKeys}
           inFlightCommands={inFlightCommands}
-          onCreate={createSearchResultTask}
-          results={searchResults}
+          onCreate={(result) => createSearchResultTask(result, createOptions)}
+          onTaskAction={runTaskEntryAction}
+          onToggle={toggleTaskDetails}
+          onToggleEntry={toggleEntry}
+          entries={searchEntries}
+        />
+      ) : view === "settings" ? (
+        <SettingsPanel
+          currentDownloadDir={downloadDir}
+          settings={settings}
+          onChange={changeSettings}
         />
       ) : (
-        <TaskList
-          items={items}
+        <TaskEntries
+          tasks={visibleTasks}
           inFlightCommands={inFlightCommands}
-          expanded={expanded}
-          onTaskAction={runListAction}
-          onToggle={toggle}
+          expandedEntryKeys={expandedEntryKeys}
+          onTaskAction={runTaskEntryAction}
+          onToggle={toggleTaskDetails}
         />
       )}
 
-      {pendingDelete && (
+      {taskPendingDelete && (
         <DeleteTaskDialog
-          item={pendingDelete}
-          keepFiles={keepDeleteFiles}
-          onCancel={() => setPendingDelete(null)}
-          onChangeKeepFiles={setKeepDeleteFiles}
+          task={taskPendingDelete}
+          keepFiles={keepFilesOnDelete}
+          onCancel={() => setTaskPendingDelete(null)}
+          onChangeKeepFiles={setKeepFilesOnDelete}
           onConfirm={confirmDelete}
         />
       )}
@@ -341,7 +393,9 @@ function useTasks(): TaskStore {
       }
       return {
         ...current,
-        tasks: current.tasks.map((item) => item.id === next.id ? next : item)
+        tasks: current.tasks.some((item) => item.id === next.id)
+          ? current.tasks.map((item) => item.id === next.id ? next : item)
+          : [next, ...current.tasks]
       };
     });
   }, []);
@@ -379,7 +433,7 @@ function useTasks(): TaskStore {
   );
 
   const createSearchResultTask = useCallback(
-    async (result: SearchResult): Promise<void> => {
+    async (result: SearchResult, options: CreateTaskOptions = {}): Promise<void> => {
       if (!result.hash) {
         return;
       }
@@ -390,7 +444,7 @@ function useTasks(): TaskStore {
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const item = await postJSON<TaskState>(taskListEndpoint(), { result });
+        const item = await postJSON<TaskState>(taskListEndpoint(), createTaskPayload({ result }, options));
         mergeTask(item);
         const next = await requestJSON<TaskState>(taskActionEndpoint(item.id, "continue"), "PUT");
         mergeTask(next);
@@ -404,7 +458,7 @@ function useTasks(): TaskStore {
   );
 
   const createMagnetTask = useCallback(
-    async (magnetUrl: string): Promise<TaskState | null> => {
+    async (magnetUrl: string, options: CreateTaskOptions = {}): Promise<TaskState | null> => {
       const commandKey = `magnet\0${magnetUrl}`;
       if (inFlightCommandsRef.current.has(commandKey)) {
         return null;
@@ -412,7 +466,7 @@ function useTasks(): TaskStore {
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const item = await postJSON<TaskState>(taskListEndpoint(), { magnetUrl });
+        const item = await postJSON<TaskState>(taskListEndpoint(), createTaskPayload({ magnetUrl }, options));
         mergeTask(item);
         const next = await requestJSON<TaskState>(taskActionEndpoint(item.id, "continue"), "PUT");
         mergeTask(next);
@@ -449,6 +503,7 @@ function useTasks(): TaskStore {
   }, [mergeAppState]);
 
   return {
+    downloadDir: state?.downloadDir ?? "",
     downloads: state?.tasks ?? [],
     error,
     inFlightCommands,
@@ -536,54 +591,109 @@ function CreatePanel({
   );
 }
 
-function SearchWorkspace({
+function SearchView({
+  expandedEntryKeys,
+  entries,
   inFlightCommands,
   onCreate,
-  results
+  onTaskAction,
+  onToggle,
+  onToggleEntry
 }: {
+  expandedEntryKeys: Record<string, boolean>;
+  entries: SearchEntry[];
   inFlightCommands: Set<string>;
   onCreate: (result: SearchResult) => Promise<void>;
-  results: SearchResult[];
+  onTaskAction: (item: TaskState, action: TaskAction) => Promise<void>;
+  onToggle: (item: TaskState) => void;
+  onToggleEntry: (key: string) => void;
 }) {
   return (
     <section className="taskList" aria-label="Search results">
-      {results.length === 0 ? (
+      {entries.length === 0 ? (
         <div className="emptyBox">No search results</div>
       ) : (
-        <SearchResultsPanel
+        <SearchEntries
+          expandedEntryKeys={expandedEntryKeys}
+          entries={entries}
           inFlightCommands={inFlightCommands}
           onCreate={onCreate}
-          results={results}
+          onTaskAction={onTaskAction}
+          onToggle={onToggle}
+          onToggleEntry={onToggleEntry}
         />
       )}
     </section>
   );
 }
 
-function SearchResultsPanel({
+function SearchEntries({
+  expandedEntryKeys,
+  entries,
   inFlightCommands,
   onCreate,
-  results
+  onTaskAction,
+  onToggle,
+  onToggleEntry
+}: {
+  expandedEntryKeys: Record<string, boolean>;
+  entries: SearchEntry[];
+  inFlightCommands: Set<string>;
+  onCreate: (result: SearchResult) => Promise<void>;
+  onTaskAction: (item: TaskState, action: TaskAction) => Promise<void>;
+  onToggle: (item: TaskState) => void;
+  onToggleEntry: (key: string) => void;
+}) {
+  return (
+    <>
+      {entries.map((entry, index) => {
+        if (entry.kind === "task") {
+          return (
+            <TaskEntry
+              key={`${taskEntryKey(entry.task)}:${index}`}
+              task={entry.task}
+              inFlightCommands={inFlightCommands}
+              open={Boolean(expandedEntryKeys[taskEntryKey(entry.task)])}
+              onTaskAction={onTaskAction}
+              onToggle={() => onToggle(entry.task)}
+            />
+          );
+        }
+        const key = candidateTaskKey(entry.result);
+        return (
+          <CandidateTaskEntry
+            key={`${key}:${index}`}
+            inFlightCommands={inFlightCommands}
+            onCreate={onCreate}
+            onToggle={() => onToggleEntry(key)}
+            open={Boolean(expandedEntryKeys[key])}
+            result={entry.result}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function CandidateTaskEntry({
+  inFlightCommands,
+  onCreate,
+  onToggle,
+  open,
+  result
 }: {
   inFlightCommands: Set<string>;
   onCreate: (result: SearchResult) => Promise<void>;
-  results: SearchResult[];
+  onToggle: () => void;
+  open: boolean;
+  result: SearchResult;
 }) {
+  const busy = inFlightCommands.has(searchResultActionKey(result));
   return (
-    <div className="searchResults">
-      {results.map((result) => {
-        const busy = inFlightCommands.has(searchResultActionKey(result));
-        return (
-          <article className="resultRow" key={result.hash || `${result.provider}:${result.title}`}>
-            <div className="resultBody">
-              <div className="resultTitle">{result.title}</div>
-              <div className="resultMeta">
-                <span>{result.provider || "-"}</span>
-                <span>{formatBytes(result.bytes)}</span>
-                <span>{result.seeders}/{result.peers}</span>
-                {result.category && <span>{result.category}</span>}
-              </div>
-            </div>
+    <article className="taskItem">
+      <TaskHeader
+        actions={(
+          <>
             <button
               className="iconButton taskAction continue"
               disabled={busy || !result.hash}
@@ -592,121 +702,221 @@ function SearchResultsPanel({
             >
               {busy ? <span className="spinner" aria-hidden="true" /> : <Play size={16} />}
             </button>
-          </article>
-        );
-      })}
+            {result.magnetUrl && (
+              <CopyButton value={result.magnetUrl} title="Copy MagnetLink" variant="magnet" size={17} />
+            )}
+          </>
+        )}
+        data={taskHeaderDataFromSearchResult(result)}
+        open={open}
+        onToggle={onToggle}
+      />
+      {open && <CandidateTaskDetails result={result} />}
+    </article>
+  );
+}
+
+function CandidateTaskDetails({ result }: { result: SearchResult }) {
+  return (
+    <div className="taskDetails">
+      <DetailBox icon={<Database size={16} />} title="Torrent">
+        <div className="taskInfoBody">
+          <dl className="detailGrid">
+            <DetailItem label="Provider" value={result.provider || "-"} />
+            <DetailItem label="Size" value={formatBytes(result.bytes)} />
+            <DetailItem label="Date" value={formatDate(result.date)} />
+            <DetailItem label="Seeds / Peers" value={`${result.seeders}/${result.peers}`} />
+            <DetailItem label="Category" value={result.category || "-"} />
+          </dl>
+          <CodeBlock label="Info Hash" value={result.hash || ""} />
+          <CodeBlock
+            action={
+              result.magnetUrl ? (
+                <CopyButton value={result.magnetUrl} title="Copy MagnetLink" variant="magnet" size={15} />
+              ) : null
+            }
+            label="MagnetLink"
+            value={result.magnetUrl || ""}
+          />
+        </div>
+      </DetailBox>
     </div>
   );
 }
 
-function TaskList({
-  items,
+function SettingsPanel({
+  currentDownloadDir,
+  settings,
+  onChange
+}: {
+  currentDownloadDir: string;
+  settings: AppSettings;
+  onChange: (settings: AppSettings) => void;
+}) {
+  const newTaskPath = settings.newTaskPath.trim();
+  return (
+    <section className="settingsPanel" aria-label="Settings">
+      <DetailBox icon={<Settings size={16} />} title="New Tasks">
+        <div className="settingsBody">
+          <label className="settingsField">
+            <span className="settingsLabel">Default save path</span>
+            <input
+              value={settings.newTaskPath}
+              onChange={(event) => onChange({ ...settings, newTaskPath: event.target.value })}
+              placeholder={currentDownloadDir || "Server default download directory"}
+            />
+          </label>
+          <div className="settingsNote">
+            {newTaskPath
+              ? `New tasks will be created under ${newTaskPath}.`
+              : currentDownloadDir
+                ? `New tasks use the server default: ${currentDownloadDir}.`
+                : "New tasks use the server default download directory."}
+          </div>
+          <div className="settingsNote">
+            Existing tasks keep their original paths.
+          </div>
+        </div>
+      </DetailBox>
+    </section>
+  );
+}
+
+function TaskEntries({
+  tasks,
   inFlightCommands,
-  expanded,
+  expandedEntryKeys,
   onTaskAction,
   onToggle
 }: {
-  items: TaskListItem[];
+  tasks: TaskState[];
   inFlightCommands: Set<string>;
-  expanded: Record<string, boolean>;
-  onTaskAction: (item: TaskListItem, action: TaskAction) => Promise<void>;
-  onToggle: (item: TaskListItem) => void;
+  expandedEntryKeys: Record<string, boolean>;
+  onTaskAction: (item: TaskState, action: TaskAction) => Promise<void>;
+  onToggle: (item: TaskState) => void;
 }) {
   return (
     <section className="taskList" aria-label="Tasks">
-      {items.length === 0 && <div className="emptyBox">No tasks</div>}
-      {items.map((item) => (
-        <TaskCard
-          key={item.id}
-          item={item}
+      {tasks.length === 0 && <div className="emptyBox">No tasks</div>}
+      {tasks.map((task) => (
+        <TaskEntry
+          key={taskEntryKey(task)}
+          task={task}
           inFlightCommands={inFlightCommands}
-          open={Boolean(expanded[item.id])}
+          open={Boolean(expandedEntryKeys[taskEntryKey(task)])}
           onTaskAction={onTaskAction}
-          onToggle={() => onToggle(item)}
+          onToggle={() => onToggle(task)}
         />
       ))}
     </section>
   );
 }
 
-const TaskCard = React.memo(function TaskCard({
-  item,
+const TaskEntry = React.memo(function TaskEntry({
+  task,
   inFlightCommands,
   open,
   onTaskAction,
   onToggle
 }: {
-  item: TaskListItem;
+  task: TaskState;
   inFlightCommands: Set<string>;
   open: boolean;
-  onTaskAction: (item: TaskListItem, action: TaskAction) => Promise<void>;
+  onTaskAction: (item: TaskState, action: TaskAction) => Promise<void>;
   onToggle: () => void;
 }) {
   return (
-    <article className={`taskItem ${open ? "open" : ""} ${item.downloading ? "downloading" : ""}`}>
-      <div
-        className="taskSummary"
-        onClick={onToggle}
-        onKeyDown={(event) => handleToggleKeyDown(event, onToggle)}
-        role="button"
-        tabIndex={0}
-      >
-        <div className={`disclosure ${open ? "open" : ""}`} aria-hidden="true">
-          <ChevronRight size={18} />
-        </div>
-
-        <div className="taskBody">
-          <h2>{item.title || "Untitled"}</h2>
-          <div className="metaPills">
-            <MetaPill icon={<Database size={14} />} value={item.provider || "-"} />
-            <MetaPill icon={<HardDrive size={14} />} value={formatBytes(item.bytes)} />
-            <MetaPill icon={<Users size={14} />} value={`${item.seeders}/${item.peers}`} />
-            <MetaPill icon={<Calendar size={14} />} value={formatDate(item.date)} />
-            {item.category && <MetaPill value={item.category} />}
-          </div>
-        </div>
-
-        <DownloadStatus status={item.download.status} />
-
-        <div className="taskActions" onClick={(event) => event.stopPropagation()}>
-          <TaskActionButton
-            action="continue"
-            icon={<Play size={16} />}
-            inFlightCommands={inFlightCommands}
-            item={item}
-            onAction={onTaskAction}
-            title="Continue"
-          />
-          <TaskActionButton
-            action="pause"
-            icon={<Pause size={16} />}
-            inFlightCommands={inFlightCommands}
-            item={item}
-            onAction={onTaskAction}
-            title="Pause"
-          />
-          <TaskActionButton
-            action="delete"
-            icon={<Trash2 size={16} />}
-            inFlightCommands={inFlightCommands}
-            item={item}
-            onAction={onTaskAction}
-            title="Delete task"
-          />
-          {item.magnetUrl && (
-            <CopyButton value={item.magnetUrl} title="Copy MagnetLink" variant="magnet" size={17} />
-          )}
-        </div>
-      </div>
+    <article className={`taskItem ${open ? "open" : ""} ${task.downloading ? "downloading" : ""}`}>
+      <TaskHeader
+        actions={(
+          <>
+            <TaskActionButton
+              action="continue"
+              icon={<Play size={16} />}
+              inFlightCommands={inFlightCommands}
+              task={task}
+              onAction={onTaskAction}
+              title="Continue"
+            />
+            <TaskActionButton
+              action="pause"
+              icon={<Pause size={16} />}
+              inFlightCommands={inFlightCommands}
+              task={task}
+              onAction={onTaskAction}
+              title="Pause"
+            />
+            <TaskActionButton
+              action="delete"
+              icon={<Trash2 size={16} />}
+              inFlightCommands={inFlightCommands}
+              task={task}
+              onAction={onTaskAction}
+              title="Delete task"
+            />
+            {task.magnetUrl && (
+              <CopyButton value={task.magnetUrl} title="Copy MagnetLink" variant="magnet" size={17} />
+            )}
+          </>
+        )}
+        data={taskHeaderDataFromTask(task)}
+        open={open}
+        onToggle={onToggle}
+      />
 
       {open && (
         <TaskDetails
-          item={item}
+          item={task}
         />
       )}
     </article>
   );
 });
+
+function TaskHeader({
+  actions,
+  data,
+  open,
+  onToggle
+}: {
+  actions: React.ReactNode;
+  data: TaskHeaderData;
+  open?: boolean;
+  onToggle?: () => void;
+}) {
+  const canToggle = Boolean(onToggle);
+  return (
+    <div
+      className={`taskHeader ${canToggle ? "toggleable" : ""}`}
+      onClick={onToggle}
+      onKeyDown={onToggle ? (event) => handleToggleKeyDown(event, onToggle) : undefined}
+      role={canToggle ? "button" : undefined}
+      tabIndex={canToggle ? 0 : undefined}
+    >
+      <div className={`disclosure ${open ? "open" : ""} ${canToggle ? "" : "hidden"}`} aria-hidden="true">
+        {canToggle && <ChevronRight size={18} />}
+      </div>
+
+      <div className="taskBody">
+        <h2>{data.title || "Untitled"}</h2>
+        <div className="metaPills">
+          <MetaPill icon={<Database size={14} />} value={data.provider || "-"} />
+          <MetaPill icon={<HardDrive size={14} />} value={formatBytes(data.bytes)} />
+          <MetaPill icon={<Users size={14} />} value={`${data.seeders}/${data.peers}`} />
+          <MetaPill icon={<Calendar size={14} />} value={formatDate(data.date)} />
+          {data.category && <MetaPill value={data.category} />}
+          {data.hash && <MetaPill value={shortHash(data.hash)} />}
+        </div>
+      </div>
+
+      <DownloadStatus status={data.status} />
+
+      <div className="taskActions" onClick={(event) => event.stopPropagation()}>
+        {actions}
+      </div>
+    </div>
+  );
+}
 
 function handleToggleKeyDown(event: React.KeyboardEvent<HTMLDivElement>, onToggle: () => void) {
   if (event.key !== "Enter" && event.key !== " ") {
@@ -1203,26 +1413,26 @@ function TaskActionButton({
   action,
   icon,
   inFlightCommands,
-  item,
+  task,
   onAction,
   title
 }: {
   action: TaskAction;
   icon: React.ReactNode;
   inFlightCommands: Set<string>;
-  item: TaskListItem;
-  onAction: (item: TaskListItem, action: TaskAction) => Promise<void>;
+  task: TaskState;
+  onAction: (item: TaskState, action: TaskAction) => Promise<void>;
   title: string;
 }) {
-  const commandKey = taskActionKey(item.id, action);
-  const searchCommandKey = item.hash ? searchResultHashActionKey(item.hash) : "";
+  const commandKey = taskActionKey(task.id, action);
+  const searchCommandKey = task.hash ? searchResultHashActionKey(task.hash) : "";
   const busy = inFlightCommands.has(commandKey) || (action === "continue" && searchCommandKey !== "" && inFlightCommands.has(searchCommandKey));
-  const disabled = busy || !canRunTaskAction(item, action);
+  const disabled = busy || !canRunTaskAction(task, action);
   return (
     <button
       className={`iconButton taskAction ${action}`}
       disabled={disabled}
-      onClick={() => { void onAction(item, action); }}
+      onClick={() => { void onAction(task, action); }}
       title={title}
     >
       {busy ? <span className="spinner" aria-hidden="true" /> : icon}
@@ -1231,13 +1441,13 @@ function TaskActionButton({
 }
 
 function DeleteTaskDialog({
-  item,
+  task,
   keepFiles,
   onCancel,
   onChangeKeepFiles,
   onConfirm
 }: {
-  item: TaskListItem;
+  task: TaskState;
   keepFiles: boolean;
   onCancel: () => void;
   onChangeKeepFiles: (value: boolean) => void;
@@ -1256,7 +1466,7 @@ function DeleteTaskDialog({
           <Trash2 size={18} />
           <h2 id="deleteTaskTitle">Delete task</h2>
         </div>
-        <div className="deleteTaskName">{item.title}</div>
+        <div className="deleteTaskName">{task.title}</div>
         <label className="checkboxRow">
           <input
             checked={keepFiles}
@@ -1276,15 +1486,15 @@ function DeleteTaskDialog({
   );
 }
 
-function canRunTaskAction(item: TaskListItem, action: TaskAction): boolean {
-  if (!item.hash) {
+function canRunTaskAction(task: TaskState, action: TaskAction): boolean {
+  if (!task.hash) {
     return false;
   }
   switch (action) {
     case "continue":
-      return item.download.status !== "downloading" && item.download.status !== "complete";
+      return task.download.status !== "downloading" && task.download.status !== "complete";
     case "pause":
-      return item.download.status === "downloading";
+      return task.download.status === "downloading";
     case "delete":
       return true;
   }
@@ -1399,11 +1609,62 @@ function CopyButton({
   );
 }
 
-function taskListItems(downloads: TaskState[], view: TaskView): TaskListItem[] {
-  if (view === "search") {
+function visibleTasksForView(downloads: TaskState[], view: TaskView): TaskState[] {
+  if (view === "search" || view === "settings") {
     return [];
   }
   return downloads.filter((item) => view === "done" ? item.download.status === "complete" : isActiveTask(item));
+}
+
+function buildSearchEntries(results: SearchResult[], tasks: TaskState[]): SearchEntry[] {
+  const tasksByHash = new Map<string, TaskState>();
+  for (const task of tasks) {
+    const key = task.hash ? hashKey(task.hash) : "";
+    if (key) {
+      tasksByHash.set(key, task);
+    }
+  }
+  return results.map((result) => {
+    const task = result.hash ? tasksByHash.get(hashKey(result.hash)) : undefined;
+    return task ? { kind: "task", task } : { kind: "candidate", result };
+  });
+}
+
+function taskHeaderDataFromTask(task: TaskState): TaskHeaderData {
+  return {
+    title: task.title,
+    provider: task.provider,
+    bytes: task.bytes,
+    seeders: task.seeders,
+    peers: task.peers,
+    date: task.date,
+    category: task.category,
+    hash: task.hash,
+    magnetUrl: task.magnetUrl,
+    status: task.download.status
+  };
+}
+
+function taskHeaderDataFromSearchResult(result: SearchResult): TaskHeaderData {
+  return {
+    title: result.title,
+    provider: result.provider,
+    bytes: result.bytes,
+    seeders: result.seeders,
+    peers: result.peers,
+    date: result.date,
+    category: result.category,
+    hash: result.hash,
+    magnetUrl: result.magnetUrl
+  };
+}
+
+function hashKey(hash: string): string {
+  return hash.trim().toLowerCase();
+}
+
+function shortHash(hash: string): string {
+  return hash.trim().slice(0, 12);
 }
 
 function isActiveTask(item: TaskState): boolean {
@@ -1425,11 +1686,22 @@ function taskActionKey(id: string, action: TaskAction): string {
   return `${id}\0${action}`;
 }
 
+function taskEntryKey(task: TaskState): string {
+  return `task:${task.id}`;
+}
+
 function searchResultActionKey(result: SearchResult): string {
   if (result.hash) {
     return searchResultHashActionKey(result.hash);
   }
   return `download\0title:${result.provider}:${result.title}`;
+}
+
+function candidateTaskKey(result: SearchResult): string {
+  if (result.hash) {
+    return `candidate:${hashKey(result.hash)}`;
+  }
+  return `candidate:${result.provider}:${result.title}:${result.magnetUrl || ""}`;
 }
 
 function searchResultHashActionKey(hash: string): string {
@@ -1494,6 +1766,34 @@ function taskActionMethod(action: TaskAction): "PUT" | "DELETE" {
 
 function isMagnetInput(value: string): boolean {
   return value.trim().toLowerCase().startsWith("magnet:");
+}
+
+function createTaskPayload<T extends Record<string, unknown>>(base: T, options: CreateTaskOptions): T & CreateTaskOptions {
+  const path = options.path?.trim();
+  if (!path) {
+    return base;
+  }
+  return { ...base, path };
+}
+
+function loadSettings(): AppSettings {
+  const fallback: AppSettings = { newTaskPath: "" };
+  const raw = localStorage.getItem(settingsKey);
+  if (!raw) {
+    return fallback;
+  }
+  try {
+    const value = JSON.parse(raw) as Partial<AppSettings>;
+    return {
+      newTaskPath: typeof value.newTaskPath === "string" ? value.newTaskPath : fallback.newTaskPath
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveSettings(settings: AppSettings) {
+  localStorage.setItem(settingsKey, JSON.stringify(settings));
 }
 
 async function getJSON<T>(url: string): Promise<T> {

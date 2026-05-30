@@ -223,45 +223,49 @@ h1 {
   font-size: 12px;
 }
 
-.searchResults {
-  margin-top: 10px;
-  overflow: hidden;
-  border: 1px solid #d8dee4;
-  border-radius: 6px;
-}
-
-.resultRow {
+.settingsPanel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  min-height: 54px;
-  padding: 9px 10px;
+  gap: 12px;
 }
 
-.resultRow + .resultRow {
-  border-top: 1px solid #d8dee4;
-}
-
-.resultBody {
-  min-width: 0;
-}
-
-.resultTitle {
-  color: #0969da;
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.resultMeta {
-  display: flex;
-  flex-wrap: wrap;
+.settingsBody {
+  display: grid;
   gap: 8px;
-  margin-top: 4px;
+}
+
+.settingsField {
+  display: grid;
+  gap: 6px;
+}
+
+.settingsLabel {
+  color: #24292f;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settingsField input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  outline: 0;
+  background: #fff;
+  color: #24292f;
+}
+
+.settingsField input:focus {
+  border-color: #0969da;
+  box-shadow: 0 0 0 3px rgb(9 105 218 / 16%);
+}
+
+.settingsNote {
   color: #57606a;
   font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .taskList {
@@ -285,25 +289,28 @@ h1 {
   background: #fff;
 }
 
-.taskItem.downloading .taskSummary {
+.taskItem.downloading .taskHeader {
   box-shadow: inset 3px 0 0 #0969da;
 }
 
-.taskSummary {
+.taskHeader {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   min-height: 64px;
   padding: 12px 14px;
+}
+
+.taskHeader.toggleable {
   cursor: pointer;
 }
 
-.taskSummary:hover {
+.taskHeader.toggleable:hover {
   background: #f6f8fa;
 }
 
-.taskSummary:focus-visible {
+.taskHeader:focus-visible {
   outline: 2px solid #0969da;
   outline-offset: -2px;
 }
@@ -320,6 +327,10 @@ h1 {
 
 .disclosure.open {
   transform: rotate(90deg);
+}
+
+.disclosure.hidden {
+  visibility: hidden;
 }
 
 .taskBody {
@@ -937,7 +948,7 @@ h1 {
     flex: 1 1 0;
   }
 
-  .taskSummary {
+  .taskHeader {
     grid-template-columns: 28px minmax(0, 1fr) auto;
     align-items: start;
   }
@@ -958,11 +969,11 @@ h1 {
 }
 
 @media (max-width: 560px) {
-  .taskSummary {
+  .taskHeader {
     grid-template-columns: 28px minmax(0, 1fr);
   }
 
-  .taskSummary .status,
+  .taskHeader .status,
   .taskActions {
     grid-column: 2 / -1;
   }
