@@ -33,9 +33,12 @@ func appFlags() []cli.Flag {
 			Value: 8 * time.Second,
 		},
 		&cli.StringFlag{
-			Name:     FlagSaveTo,
-			Usage:    "directory to save downloaded files",
-			Required: true,
+			Name:  FlagDownloadDir,
+			Usage: "default directory to save downloaded files",
+		},
+		&cli.StringFlag{
+			Name:  FlagStateDir,
+			Usage: "directory for application state and torrent resume metadata",
 		},
 		&cli.StringFlag{
 			Name:  FlagTorrentListen,

@@ -4,10 +4,12 @@ go 1.26
 
 require (
 	github.com/anacrolix/dht/v2 v2.23.1-0.20260525063928-ec3a9bd99456
+	github.com/anacrolix/generics v0.2.0
 	github.com/anacrolix/torrent v1.61.1-0.20260525064632-ee16caf4f382
 	github.com/sirupsen/logrus v1.9.4
 	github.com/swaggest/swgui v1.8.7
 	github.com/urfave/cli/v2 v2.27.7
+	go.etcd.io/bbolt v1.3.6
 	golang.org/x/time v0.14.0
 )
 
@@ -17,7 +19,6 @@ require (
 	github.com/anacrolix/btree v0.1.1 // indirect
 	github.com/anacrolix/chansync v0.7.0 // indirect
 	github.com/anacrolix/envpprof v1.4.0 // indirect
-	github.com/anacrolix/generics v0.2.0 // indirect
 	github.com/anacrolix/go-libutp v1.3.2 // indirect
 	github.com/anacrolix/log v0.17.1-0.20251118025802-918f1157b7bb // indirect
 	github.com/anacrolix/missinggo v1.3.0 // indirect
@@ -80,7 +81,6 @@ require (
 	github.com/vearutop/statigz v1.4.0 // indirect
 	github.com/wlynxg/anet v0.0.3 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
-	go.etcd.io/bbolt v1.3.6 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect

@@ -1,1133 +1,1151 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "404 Downloader API",
-    "version": "1.0.0",
-    "description": "Local HTTP API used by the in-process 404 Downloader web UI. This API is intended for the local browser session started by 4dl, not as a public external service contract."
-  },
-  "servers": [
-    {
-      "url": "/",
-      "description": "Current local web server"
-    }
-  ],
-  "paths": {
-    "/api/healthz": {
-      "get": {
-        "operationId": "getHealth",
-        "summary": "Health check",
-        "responses": {
-          "200": {
-            "description": "The local web server is ready to accept requests.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          }
-        }
-      }
+    "openapi": "3.1.0",
+    "info": {
+        "title": "404 Downloader API",
+        "version": "1.0.0",
+        "description": "Local HTTP API used by the in-process 404 Downloader web UI. This API is intended for the local browser session started by 4dl, not as a public external service contract."
     },
-    "/api/openapi.json": {
-      "get": {
-        "operationId": "getOpenAPISpec",
-        "summary": "OpenAPI specification",
-        "responses": {
-          "200": {
-            "description": "The OpenAPI specification for the local API.",
-            "content": {
-              "application/vnd.oai.openapi+json": {
-                "schema": {
-                  "type": "object"
-                }
-              },
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
+    "servers": [
+        {
+            "url": "/",
+            "description": "Current local web server"
         }
-      }
-    },
-    "/api/search": {
-      "post": {
-        "operationId": "searchTorrents",
-        "summary": "Search torrents",
-        "description": "Searches configured providers, stores the returned candidates as the current search result list, and emits an SSE state update. This does not create download tasks and does not add torrents to anacrolix/torrent.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SearchRequest"
-              }
+    ],
+    "paths": {
+        "/api/healthz": {
+            "get": {
+                "operationId": "getHealth",
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "The local web server is ready to accept requests.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                }
+                            }
+                        }
+                    }
+                }
             }
-          }
         },
-        "responses": {
-          "200": {
-            "description": "Search results sorted by seeders descending. Results without hash are dropped.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SearchResult"
-                  }
+        "/api/openapi.json": {
+            "get": {
+                "operationId": "getOpenAPISpec",
+                "summary": "OpenAPI specification",
+                "responses": {
+                    "200": {
+                        "description": "The OpenAPI specification for the local API.",
+                        "content": {
+                            "application/vnd.oai.openapi+json": {
+                                "schema": {
+                                    "type": "object"
+                                }
+                            },
+                            "application/json": {
+                                "schema": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
                 }
-              }
             }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "502": {
-            "$ref": "#/components/responses/ProviderError"
-          },
-          "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
-          }
-        }
-      }
-    },
-    "/api/torrents": {
-      "get": {
-        "operationId": "listTorrents",
-        "summary": "List torrents",
-        "description": "Returns the current torrent list snapshot. List items usually omit file details to keep the response small.",
-        "responses": {
-          "200": {
-            "description": "Current application state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AppState"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "operationId": "createDownload",
-        "summary": "Create download",
-        "description": "Creates a local download task from a selected search result. This is the first point where a search candidate becomes managed download state; result.hash is required and is the only dedupe key.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateDownloadRequest"
-              }
-            }
-          }
         },
-        "responses": {
-          "201": {
-            "description": "Download task created, or an existing task with the same hash returned.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TorrentState"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
-    },
-    "/api/torrents/stream": {
-      "get": {
-        "operationId": "streamTorrents",
-        "summary": "Stream torrent state (SSE)",
-        "description": "Streams AppState snapshots as Server-Sent Events. The server emits a state event immediately after connection, after torrent state changes, and roughly once per second as a fallback until the request is closed or writing fails.\n\nSwagger UI cannot reliably Try it out because this response is a long-lived text/event-stream. Use curl -N /api/torrents/stream or browser EventSource instead.",
-        "responses": {
-          "200": {
-            "description": "Server-Sent Events stream. Each event uses event name state and a JSON AppState payload in data.",
-            "headers": {
-              "Cache-Control": {
-                "description": "Always no-cache.",
-                "schema": {
-                  "type": "string",
-                  "const": "no-cache"
-                }
-              },
-              "Connection": {
-                "description": "Always keep-alive.",
-                "schema": {
-                  "type": "string",
-                  "const": "keep-alive"
-                }
-              },
-              "X-Accel-Buffering": {
-                "description": "Disables proxy buffering for compatible proxies.",
-                "schema": {
-                  "type": "string",
-                  "const": "no"
-                }
-              }
-            },
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "SSE frames in the form event: state followed by data: <AppState JSON>."
+        "/api/search": {
+            "post": {
+                "operationId": "searchTasks",
+                "summary": "Search downloadable tasks",
+                "description": "Searches configured providers, stores the returned candidates as the current search result list, and emits an SSE state update. This does not create download tasks and does not add torrents to anacrolix/torrent.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SearchRequest"
+                            }
+                        }
+                    }
                 },
-                "examples": {
-                  "state": {
-                    "summary": "State event",
-                    "value": "event: state\ndata: {\"updated\":\"2026-05-28T12:00:00+08:00\",\"saveTo\":\"/downloads\",\"torrents\":[]}\n\n"
-                  }
+                "responses": {
+                    "200": {
+                        "description": "Search results sorted by seeders descending. Results without hash are dropped.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/SearchResult"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "502": {
+                        "$ref": "#/components/responses/ProviderError"
+                    },
+                    "503": {
+                        "$ref": "#/components/responses/ServiceUnavailable"
+                    }
                 }
-              }
             }
-          }
+        },
+        "/api/tasks": {
+            "get": {
+                "operationId": "listTasks",
+                "summary": "List tasks",
+                "description": "Returns the current task list snapshot. List items usually omit file details to keep the response small.",
+                "responses": {
+                    "200": {
+                        "description": "Current application state.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AppState"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "operationId": "createTask",
+                "summary": "Create download",
+                "description": "Creates a persisted local download task from a selected search result. This is the first point where a search candidate becomes managed download state; result.hash is required and is the only dedupe key. The request path is a per-task download directory; when omitted, the server default downloadDir is used. Tasks and fetched metainfo are stored under --state-dir, or an independent OS config application directory when --state-dir is omitted, and restored on restart.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreateTaskRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Download task created, or an existing task with the same hash returned.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequest"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    }
+                }
+            }
+        },
+        "/api/tasks/stream": {
+            "get": {
+                "operationId": "streamTasks",
+                "summary": "Stream task state (SSE)",
+                "description": "Streams AppState snapshots as Server-Sent Events. The server emits a state event immediately after connection, after task state changes, and roughly once per second as a fallback until the request is closed or writing fails.\n\nSwagger UI cannot reliably Try it out because this response is a long-lived text/event-stream. Use curl -N /api/tasks/stream or browser EventSource instead.",
+                "responses": {
+                    "200": {
+                        "description": "Server-Sent Events stream. Each event uses event name state and a JSON AppState payload in data.",
+                        "headers": {
+                            "Cache-Control": {
+                                "description": "Always no-cache.",
+                                "schema": {
+                                    "type": "string",
+                                    "const": "no-cache"
+                                }
+                            },
+                            "Connection": {
+                                "description": "Always keep-alive.",
+                                "schema": {
+                                    "type": "string",
+                                    "const": "keep-alive"
+                                }
+                            },
+                            "X-Accel-Buffering": {
+                                "description": "Disables proxy buffering for compatible proxies.",
+                                "schema": {
+                                    "type": "string",
+                                    "const": "no"
+                                }
+                            }
+                        },
+                        "content": {
+                            "text/event-stream": {
+                                "schema": {
+                                    "type": "string",
+                                    "description": "SSE frames in the form event: state followed by data: <AppState JSON>."
+                                },
+                                "examples": {
+                                    "state": {
+                                        "summary": "State event",
+                                        "value": "event: state\ndata: {\"updated\":\"2026-05-28T12:00:00+08:00\",\"downloadDir\":\"/downloads\",\"tasks\":[]}\n\n"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tasks/stream2": {
+            "get": {
+                "operationId": "getTaskStreamSnapshot",
+                "summary": "Get task stream snapshot",
+                "description": "Returns the same AppState payload shape used by each /api/tasks/stream SSE state event, but as a single application/json response. This endpoint is intended for clients and agents that want the current stream state without opening an SSE connection.",
+                "responses": {
+                    "200": {
+                        "description": "Current AppState snapshot in the same shape as an SSE state event data payload.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AppState"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tasks/{id}": {
+            "get": {
+                "operationId": "getTask",
+                "summary": "Get task",
+                "description": "Returns one task with full state. File details are included when metadata is ready.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/TaskID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Task state.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/TaskNotFound"
+                    }
+                }
+            }
+        },
+        "/api/tasks/{id}/start": {
+            "post": {
+                "operationId": "startTask",
+                "summary": "Start task download",
+                "description": "Starts or resumes the task. This is a long-running control action: the current implementation returns 202 Accepted on success, but may wait for torrent metadata before sending that response. Automation and AI agents should not treat the 202 response as completion of the download. Use a client-side timeout appropriate for metadata lookup, then observe progress through GET /api/tasks/{id} or the /api/tasks/stream SSE endpoint.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/TaskID"
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/EmptyJSON"
+                },
+                "responses": {
+                    "202": {
+                        "description": "Download started or resumed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/TaskNotFound"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    }
+                }
+            }
+        },
+        "/api/tasks/{id}/pause": {
+            "post": {
+                "operationId": "pauseTask",
+                "summary": "Pause task download",
+                "description": "Pauses an active task download. If the task has no active runtime, the API returns the current item state.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/TaskID"
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/EmptyJSON"
+                },
+                "responses": {
+                    "200": {
+                        "description": "Download paused or current state returned.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/TaskNotFound"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    }
+                }
+            }
+        },
+        "/api/tasks/{id}/delete": {
+            "post": {
+                "operationId": "deleteTask",
+                "summary": "Delete downloaded data",
+                "description": "Cancels the task runtime, removes the persisted task, and attempts to delete final payload files and their .part files.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/TaskID"
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/EmptyJSON"
+                },
+                "responses": {
+                    "200": {
+                        "description": "Local download state deleted.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/TaskNotFound"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    }
+                }
+            }
         }
-      }
     },
-    "/api/torrents/stream2": {
-      "get": {
-        "operationId": "getTorrentStreamSnapshot",
-        "summary": "Get torrent stream snapshot",
-        "description": "Returns the same AppState payload shape used by each /api/torrents/stream SSE state event, but as a single application/json response. This endpoint is intended for clients and agents that want the current stream state without opening an SSE connection.",
-        "responses": {
-          "200": {
-            "description": "Current AppState snapshot in the same shape as an SSE state event data payload.",
-            "content": {
-              "application/json": {
+    "components": {
+        "parameters": {
+            "TaskID": {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "description": "Task item identifier.",
                 "schema": {
-                  "$ref": "#/components/schemas/AppState"
+                    "type": "string",
+                    "minLength": 1
                 }
-              }
             }
-          }
-        }
-      }
-    },
-    "/api/torrents/{id}": {
-      "get": {
-        "operationId": "getTorrent",
-        "summary": "Get torrent",
-        "description": "Returns one torrent with full state. File details are included when metadata is ready.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/TorrentID"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Torrent state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TorrentState"
+        },
+        "requestBodies": {
+            "EmptyJSON": {
+                "description": "Request body is currently ignored. The web UI sends an empty JSON object.",
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        },
+                        "example": {}
+                    }
                 }
-              }
             }
-          },
-          "404": {
-            "$ref": "#/components/responses/TorrentNotFound"
-          }
-        }
-      }
-    },
-    "/api/torrents/{id}/start": {
-      "post": {
-        "operationId": "startTorrentDownload",
-        "summary": "Start torrent download",
-        "description": "Starts or resumes the torrent. This is a long-running control action: the current implementation returns 202 Accepted on success, but may wait for torrent metadata before sending that response. Automation and AI agents should not treat the 202 response as completion of the download. Use a client-side timeout appropriate for metadata lookup, then observe progress through GET /api/torrents/{id} or the /api/torrents/stream SSE endpoint.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/TorrentID"
-          }
-        ],
-        "requestBody": {
-          "$ref": "#/components/requestBodies/EmptyJSON"
         },
         "responses": {
-          "202": {
-            "description": "Download started or resumed.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TorrentState"
+            "BadRequest": {
+                "description": "The request was invalid.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/APIError"
+                        }
+                    }
                 }
-              }
+            },
+            "TaskNotFound": {
+                "description": "Task was not found.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/APIError"
+                        },
+                        "example": {
+                            "error": "task not found"
+                        }
+                    }
+                }
+            },
+            "Conflict": {
+                "description": "The requested task operation could not be completed.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/APIError"
+                        }
+                    }
+                }
+            },
+            "ProviderError": {
+                "description": "One or more search providers failed.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/APIError"
+                        }
+                    }
+                }
+            },
+            "ServiceUnavailable": {
+                "description": "Search is not configured.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/APIError"
+                        }
+                    }
+                }
             }
-          },
-          "404": {
-            "$ref": "#/components/responses/TorrentNotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
-    },
-    "/api/torrents/{id}/pause": {
-      "post": {
-        "operationId": "pauseTorrentDownload",
-        "summary": "Pause torrent download",
-        "description": "Pauses an active torrent download. If the torrent has no active runtime, the API returns the current item state.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/TorrentID"
-          }
-        ],
-        "requestBody": {
-          "$ref": "#/components/requestBodies/EmptyJSON"
         },
-        "responses": {
-          "200": {
-            "description": "Download paused or current state returned.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TorrentState"
-                }
-              }
+        "schemas": {
+            "HealthResponse": {
+                "type": "object",
+                "required": [
+                    "status"
+                ],
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "const": "ok"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "APIError": {
+                "type": "object",
+                "required": [
+                    "error"
+                ],
+                "properties": {
+                    "error": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "SearchRequest": {
+                "type": "object",
+                "required": [
+                    "query"
+                ],
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum number of results to return. Defaults to the server limit when omitted or zero."
+                    },
+                    "providers": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Provider names to query. Omit or pass an empty array to search all configured providers."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "CreateTaskRequest": {
+                "type": "object",
+                "required": [
+                    "result"
+                ],
+                "properties": {
+                    "result": {
+                        "$ref": "#/components/schemas/SearchResult"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Per-task download directory. Omit or pass an empty string to use the server default downloadDir."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "SearchResult": {
+                "type": "object",
+                "required": [
+                    "provider",
+                    "title",
+                    "hash",
+                    "seeders",
+                    "peers"
+                ],
+                "properties": {
+                    "provider": {
+                        "type": "string"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "bytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "category": {
+                        "type": "string"
+                    },
+                    "date": {
+                        "type": "string"
+                    },
+                    "seeders": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "peers": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "hash": {
+                        "type": "string",
+                        "description": "BitTorrent info hash. Search results without hash are not returned."
+                    },
+                    "magnetUrl": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "AppState": {
+                "type": "object",
+                "required": [
+                    "updated",
+                    "downloadDir",
+                    "searchResults",
+                    "tasks"
+                ],
+                "properties": {
+                    "updated": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Time when this snapshot was generated."
+                    },
+                    "downloadDir": {
+                        "type": "string",
+                        "description": "Default download directory used when a task does not specify path."
+                    },
+                    "searchResults": {
+                        "type": "array",
+                        "description": "Current search candidates. These are not download tasks and are not added to anacrolix/torrent until selected for download.",
+                        "items": {
+                            "$ref": "#/components/schemas/SearchResult"
+                        }
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/TaskState"
+                        }
+                    }
+                },
+                "additionalProperties": false
+            },
+            "TaskState": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "title",
+                    "provider",
+                    "seeders",
+                    "peers",
+                    "path",
+                    "downloading",
+                    "download",
+                    "runtime"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "provider": {
+                        "type": "string"
+                    },
+                    "bytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "category": {
+                        "type": "string"
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Provider-supplied date string."
+                    },
+                    "seeders": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "peers": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "hash": {
+                        "type": "string",
+                        "description": "BitTorrent info hash. Required for search results added through POST /api/tasks."
+                    },
+                    "magnetUrl": {
+                        "type": "string",
+                        "description": "Magnet link when available."
+                    },
+                    "downloading": {
+                        "type": "boolean"
+                    },
+                    "download": {
+                        "$ref": "#/components/schemas/DownloadView"
+                    },
+                    "error": {
+                        "type": "string"
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/FileItem"
+                        }
+                    },
+                    "runtime": {
+                        "$ref": "#/components/schemas/RuntimeView"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Per-task download directory."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "TaskItem": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "title",
+                    "provider",
+                    "seeders",
+                    "peers",
+                    "path",
+                    "downloading",
+                    "download"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "provider": {
+                        "type": "string"
+                    },
+                    "bytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "category": {
+                        "type": "string"
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Provider-supplied date string."
+                    },
+                    "seeders": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "peers": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "hash": {
+                        "type": "string",
+                        "description": "BitTorrent info hash. Required for search results added through POST /api/tasks."
+                    },
+                    "magnetUrl": {
+                        "type": "string",
+                        "description": "Magnet link when available."
+                    },
+                    "downloading": {
+                        "type": "boolean"
+                    },
+                    "download": {
+                        "$ref": "#/components/schemas/DownloadView"
+                    },
+                    "error": {
+                        "type": "string"
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/FileItem"
+                        }
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Per-task download directory."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "DownloadView": {
+                "type": "object",
+                "required": [
+                    "status",
+                    "completedBytes",
+                    "bytes"
+                ],
+                "properties": {
+                    "status": {
+                        "$ref": "#/components/schemas/TaskStatus"
+                    },
+                    "completedBytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "bytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    }
+                },
+                "additionalProperties": false
+            },
+            "TaskStatus": {
+                "type": "string",
+                "enum": [
+                    "idle",
+                    "downloading",
+                    "paused",
+                    "complete"
+                ]
+            },
+            "RuntimeView": {
+                "type": "object",
+                "required": [
+                    "status"
+                ],
+                "properties": {
+                    "status": {
+                        "$ref": "#/components/schemas/RuntimeStatus"
+                    },
+                    "snapshot": {
+                        "$ref": "#/components/schemas/RuntimeSnapshot"
+                    },
+                    "error": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "RuntimeStatus": {
+                "type": "string",
+                "enum": [
+                    "inactive",
+                    "ready",
+                    "error"
+                ]
+            },
+            "RuntimeSnapshot": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "updated",
+                    "summary",
+                    "peers",
+                    "pieceRuns",
+                    "dht",
+                    "events"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "updated": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "summary": {
+                        "$ref": "#/components/schemas/RuntimeSummary"
+                    },
+                    "peers": {
+                        "type": "array",
+                        "maxItems": 30,
+                        "items": {
+                            "$ref": "#/components/schemas/RuntimePeer"
+                        }
+                    },
+                    "pieceRuns": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/RuntimePieceRun"
+                        }
+                    },
+                    "dht": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/RuntimeDHTServer"
+                        }
+                    },
+                    "events": {
+                        "type": "array",
+                        "maxItems": 160,
+                        "items": {
+                            "$ref": "#/components/schemas/RuntimeTorrentEvent"
+                        }
+                    }
+                },
+                "additionalProperties": false
+            },
+            "RuntimeSummary": {
+                "type": "object",
+                "required": [
+                    "metadataReady",
+                    "bytesCompleted",
+                    "length",
+                    "transfer",
+                    "pendingPeers",
+                    "activePeers",
+                    "connectedSeeders",
+                    "halfOpenPeers",
+                    "piecesComplete",
+                    "numPieces",
+                    "chunksReadUseful",
+                    "chunksReadWasted",
+                    "bytesReadUsefulData",
+                    "bytesWrittenData"
+                ],
+                "properties": {
+                    "infoHash": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "metadataReady": {
+                        "type": "boolean"
+                    },
+                    "bytesCompleted": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "length": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "transfer": {
+                        "$ref": "#/components/schemas/RuntimeTransfer"
+                    },
+                    "pendingPeers": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "activePeers": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "connectedSeeders": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "halfOpenPeers": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "piecesComplete": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "numPieces": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "chunksReadUseful": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "chunksReadWasted": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "bytesReadUsefulData": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "bytesWrittenData": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    }
+                },
+                "additionalProperties": false
+            },
+            "RuntimePeer": {
+                "type": "object",
+                "required": [
+                    "address",
+                    "source",
+                    "transfer",
+                    "connected"
+                ],
+                "properties": {
+                    "address": {
+                        "type": "string"
+                    },
+                    "source": {
+                        "type": "string"
+                    },
+                    "network": {
+                        "type": "string"
+                    },
+                    "client": {
+                        "type": "string"
+                    },
+                    "transfer": {
+                        "$ref": "#/components/schemas/RuntimeTransfer"
+                    },
+                    "connected": {
+                        "type": "boolean"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "RuntimeTransfer": {
+                "type": "object",
+                "required": [
+                    "downloadRate",
+                    "uploadRate"
+                ],
+                "properties": {
+                    "downloadRate": {
+                        "type": "number",
+                        "format": "double",
+                        "minimum": 0
+                    },
+                    "uploadRate": {
+                        "type": "number",
+                        "format": "double",
+                        "minimum": 0
+                    }
+                },
+                "additionalProperties": false
+            },
+            "RuntimePieceRun": {
+                "type": "object",
+                "required": [
+                    "length",
+                    "state",
+                    "complete",
+                    "partial",
+                    "hashing",
+                    "queuedHash",
+                    "priority"
+                ],
+                "properties": {
+                    "length": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "state": {
+                        "$ref": "#/components/schemas/PieceRunState"
+                    },
+                    "complete": {
+                        "type": "boolean"
+                    },
+                    "partial": {
+                        "type": "boolean"
+                    },
+                    "hashing": {
+                        "type": "boolean"
+                    },
+                    "queuedHash": {
+                        "type": "boolean"
+                    },
+                    "priority": {
+                        "type": "string",
+                        "description": "Known values are none, normal, high, readahead, next, and now. Unknown numeric priorities are serialized as decimal strings."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "PieceRunState": {
+                "type": "string",
+                "enum": [
+                    "complete",
+                    "hashing",
+                    "queued_hash",
+                    "partial",
+                    "empty"
+                ]
+            },
+            "RuntimeDHTServer": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "address",
+                    "nodes",
+                    "goodNodes",
+                    "outstandingTransactions",
+                    "outboundQueriesAttempted",
+                    "successfulOutboundAnnouncePeers",
+                    "badNodes"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "address": {
+                        "type": "string"
+                    },
+                    "nodes": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "goodNodes": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "outstandingTransactions": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "outboundQueriesAttempted": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "successfulOutboundAnnouncePeers": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "badNodes": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                },
+                "additionalProperties": false
+            },
+            "RuntimeTorrentEvent": {
+                "type": "object",
+                "required": [
+                    "time",
+                    "type"
+                ],
+                "properties": {
+                    "time": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "infoHash": {
+                        "type": "string"
+                    },
+                    "peer": {
+                        "type": "string"
+                    },
+                    "source": {
+                        "type": "string"
+                    },
+                    "network": {
+                        "type": "string"
+                    },
+                    "client": {
+                        "type": "string"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "error": {
+                        "type": "string"
+                    },
+                    "dhtQuery": {
+                        "type": "string"
+                    },
+                    "dhtNode": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "FileItem": {
+                "type": "object",
+                "required": [
+                    "path",
+                    "bytes",
+                    "completedBytes",
+                    "savePath",
+                    "status"
+                ],
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "bytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "completedBytes": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "savePath": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/FileStatus"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "FileStatus": {
+                "type": "string",
+                "enum": [
+                    "idle",
+                    "downloading",
+                    "complete"
+                ]
             }
-          },
-          "404": {
-            "$ref": "#/components/responses/TorrentNotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
         }
-      }
-    },
-    "/api/torrents/{id}/delete": {
-      "post": {
-        "operationId": "deleteTorrentDownload",
-        "summary": "Delete downloaded data",
-        "description": "Cancels the torrent runtime, prevents more downloading, and attempts to delete saved files or part files.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/TorrentID"
-          }
-        ],
-        "requestBody": {
-          "$ref": "#/components/requestBodies/EmptyJSON"
-        },
-        "responses": {
-          "200": {
-            "description": "Local download state deleted.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TorrentState"
-                }
-              }
-            }
-          },
-          "404": {
-            "$ref": "#/components/responses/TorrentNotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          }
-        }
-      }
     }
-  },
-  "components": {
-    "parameters": {
-      "TorrentID": {
-        "name": "id",
-        "in": "path",
-        "required": true,
-        "description": "Torrent item identifier.",
-        "schema": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "requestBodies": {
-      "EmptyJSON": {
-        "description": "Request body is currently ignored. The web UI sends an empty JSON object.",
-        "required": false,
-        "content": {
-          "application/json": {
-            "schema": {
-              "type": "object",
-              "additionalProperties": true
-            },
-            "example": {}
-          }
-        }
-      }
-    },
-    "responses": {
-      "BadRequest": {
-        "description": "The request was invalid.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/APIError"
-            }
-          }
-        }
-      },
-      "TorrentNotFound": {
-        "description": "Torrent was not found.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/APIError"
-            },
-            "example": {
-              "error": "torrent not found"
-            }
-          }
-        }
-      },
-      "Conflict": {
-        "description": "The requested torrent operation could not be completed.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/APIError"
-            }
-          }
-        }
-      },
-      "ProviderError": {
-        "description": "One or more search providers failed.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/APIError"
-            }
-          }
-        }
-      },
-      "ServiceUnavailable": {
-        "description": "Search is not configured.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/APIError"
-            }
-          }
-        }
-      }
-    },
-    "schemas": {
-      "HealthResponse": {
-        "type": "object",
-        "required": [
-          "status"
-        ],
-        "properties": {
-          "status": {
-            "type": "string",
-            "const": "ok"
-          }
-        },
-        "additionalProperties": false
-      },
-      "APIError": {
-        "type": "object",
-        "required": [
-          "error"
-        ],
-        "properties": {
-          "error": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "SearchRequest": {
-        "type": "object",
-        "required": [
-          "query"
-        ],
-        "properties": {
-          "query": {
-            "type": "string",
-            "minLength": 1
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Maximum number of results to return. Defaults to the server limit when omitted or zero."
-          },
-          "providers": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Provider names to query. Omit or pass an empty array to search all configured providers."
-          }
-        },
-        "additionalProperties": false
-      },
-      "CreateDownloadRequest": {
-        "type": "object",
-        "required": [
-          "result"
-        ],
-        "properties": {
-          "result": {
-            "$ref": "#/components/schemas/SearchResult"
-          }
-        },
-        "additionalProperties": false
-      },
-      "SearchResult": {
-        "type": "object",
-        "required": [
-          "provider",
-          "title",
-          "hash",
-          "seeders",
-          "peers"
-        ],
-        "properties": {
-          "provider": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "category": {
-            "type": "string"
-          },
-          "date": {
-            "type": "string"
-          },
-          "seeders": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "peers": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "hash": {
-            "type": "string",
-            "description": "BitTorrent info hash. Search results without hash are not returned."
-          },
-          "magnetUrl": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "AppState": {
-        "type": "object",
-        "required": [
-          "updated",
-          "saveTo",
-          "searchResults",
-          "torrents"
-        ],
-        "properties": {
-          "updated": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Time when this snapshot was generated."
-          },
-          "saveTo": {
-            "type": "string",
-            "description": "Download save directory."
-          },
-          "searchResults": {
-            "type": "array",
-            "description": "Current search candidates. These are not download tasks and are not added to anacrolix/torrent until selected for download.",
-            "items": {
-              "$ref": "#/components/schemas/SearchResult"
-            }
-          },
-          "torrents": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TorrentState"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "TorrentState": {
-        "type": "object",
-        "required": [
-          "id",
-          "title",
-          "provider",
-          "seeders",
-          "peers",
-          "downloading",
-          "download",
-          "runtime"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "provider": {
-            "type": "string"
-          },
-          "bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "category": {
-            "type": "string"
-          },
-          "date": {
-            "type": "string",
-            "description": "Provider-supplied date string."
-          },
-          "seeders": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "peers": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "hash": {
-            "type": "string",
-            "description": "BitTorrent info hash. Required for search results added through POST /api/torrents."
-          },
-          "magnetUrl": {
-            "type": "string",
-            "description": "Magnet link when available."
-          },
-          "downloading": {
-            "type": "boolean"
-          },
-          "download": {
-            "$ref": "#/components/schemas/DownloadView"
-          },
-          "error": {
-            "type": "string"
-          },
-          "files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FileItem"
-            }
-          },
-          "runtime": {
-            "$ref": "#/components/schemas/RuntimeView"
-          }
-        },
-        "additionalProperties": false
-      },
-      "TorrentItem": {
-        "type": "object",
-        "required": [
-          "id",
-          "title",
-          "provider",
-          "seeders",
-          "peers",
-          "downloading",
-          "download"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "provider": {
-            "type": "string"
-          },
-          "bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "category": {
-            "type": "string"
-          },
-          "date": {
-            "type": "string",
-            "description": "Provider-supplied date string."
-          },
-          "seeders": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "peers": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "hash": {
-            "type": "string",
-            "description": "BitTorrent info hash. Required for search results added through POST /api/torrents."
-          },
-          "magnetUrl": {
-            "type": "string",
-            "description": "Magnet link when available."
-          },
-          "downloading": {
-            "type": "boolean"
-          },
-          "download": {
-            "$ref": "#/components/schemas/DownloadView"
-          },
-          "error": {
-            "type": "string"
-          },
-          "files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FileItem"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "DownloadView": {
-        "type": "object",
-        "required": [
-          "status",
-          "completedBytes",
-          "bytes"
-        ],
-        "properties": {
-          "status": {
-            "$ref": "#/components/schemas/TorrentDownloadStatus"
-          },
-          "completedBytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "TorrentDownloadStatus": {
-        "type": "string",
-        "enum": [
-          "idle",
-          "downloading",
-          "paused",
-          "complete"
-        ]
-      },
-      "RuntimeView": {
-        "type": "object",
-        "required": [
-          "status"
-        ],
-        "properties": {
-          "status": {
-            "$ref": "#/components/schemas/RuntimeStatus"
-          },
-          "snapshot": {
-            "$ref": "#/components/schemas/RuntimeSnapshot"
-          },
-          "error": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "RuntimeStatus": {
-        "type": "string",
-        "enum": [
-          "inactive",
-          "ready",
-          "error"
-        ]
-      },
-      "RuntimeSnapshot": {
-        "type": "object",
-        "required": [
-          "id",
-          "updated",
-          "summary",
-          "peers",
-          "pieceRuns",
-          "dht",
-          "events"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "updated": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "summary": {
-            "$ref": "#/components/schemas/RuntimeSummary"
-          },
-          "peers": {
-            "type": "array",
-            "maxItems": 30,
-            "items": {
-              "$ref": "#/components/schemas/RuntimePeer"
-            }
-          },
-          "pieceRuns": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RuntimePieceRun"
-            }
-          },
-          "dht": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RuntimeDHTServer"
-            }
-          },
-          "events": {
-            "type": "array",
-            "maxItems": 160,
-            "items": {
-              "$ref": "#/components/schemas/RuntimeTorrentEvent"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "RuntimeSummary": {
-        "type": "object",
-        "required": [
-          "metadataReady",
-          "bytesCompleted",
-          "length",
-          "downloadRate",
-          "pendingPeers",
-          "activePeers",
-          "connectedSeeders",
-          "halfOpenPeers",
-          "piecesComplete",
-          "numPieces",
-          "chunksReadUseful",
-          "chunksReadWasted",
-          "bytesReadUsefulData",
-          "bytesWrittenData"
-        ],
-        "properties": {
-          "infoHash": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "metadataReady": {
-            "type": "boolean"
-          },
-          "bytesCompleted": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "length": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "downloadRate": {
-            "type": "number",
-            "format": "double",
-            "minimum": 0
-          },
-          "pendingPeers": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "activePeers": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "connectedSeeders": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "halfOpenPeers": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "piecesComplete": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "numPieces": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "chunksReadUseful": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "chunksReadWasted": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "bytesReadUsefulData": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "bytesWrittenData": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "RuntimePeer": {
-        "type": "object",
-        "required": [
-          "address",
-          "source",
-          "downloadRate",
-          "connected"
-        ],
-        "properties": {
-          "address": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string"
-          },
-          "network": {
-            "type": "string"
-          },
-          "client": {
-            "type": "string"
-          },
-          "downloadRate": {
-            "type": "number",
-            "format": "double",
-            "minimum": 0
-          },
-          "connected": {
-            "type": "boolean"
-          }
-        },
-        "additionalProperties": false
-      },
-      "RuntimePieceRun": {
-        "type": "object",
-        "required": [
-          "length",
-          "state",
-          "complete",
-          "partial",
-          "hashing",
-          "queuedHash",
-          "priority"
-        ],
-        "properties": {
-          "length": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "state": {
-            "$ref": "#/components/schemas/PieceRunState"
-          },
-          "complete": {
-            "type": "boolean"
-          },
-          "partial": {
-            "type": "boolean"
-          },
-          "hashing": {
-            "type": "boolean"
-          },
-          "queuedHash": {
-            "type": "boolean"
-          },
-          "priority": {
-            "type": "string",
-            "description": "Known values are none, normal, high, readahead, next, and now. Unknown numeric priorities are serialized as decimal strings."
-          }
-        },
-        "additionalProperties": false
-      },
-      "PieceRunState": {
-        "type": "string",
-        "enum": [
-          "complete",
-          "hashing",
-          "queued_hash",
-          "partial",
-          "empty"
-        ]
-      },
-      "RuntimeDHTServer": {
-        "type": "object",
-        "required": [
-          "id",
-          "address",
-          "nodes",
-          "goodNodes",
-          "outstandingTransactions",
-          "outboundQueriesAttempted",
-          "successfulOutboundAnnouncePeers",
-          "badNodes"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "address": {
-            "type": "string"
-          },
-          "nodes": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "goodNodes": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "outstandingTransactions": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "outboundQueriesAttempted": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "successfulOutboundAnnouncePeers": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "badNodes": {
-            "type": "integer",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "RuntimeTorrentEvent": {
-        "type": "object",
-        "required": [
-          "time",
-          "type"
-        ],
-        "properties": {
-          "time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "type": {
-            "type": "string"
-          },
-          "infoHash": {
-            "type": "string"
-          },
-          "peer": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string"
-          },
-          "network": {
-            "type": "string"
-          },
-          "client": {
-            "type": "string"
-          },
-          "piece": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "begin": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "length": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "message": {
-            "type": "string"
-          },
-          "error": {
-            "type": "string"
-          },
-          "dhtQuery": {
-            "type": "string"
-          },
-          "dhtNode": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "FileItem": {
-        "type": "object",
-        "required": [
-          "path",
-          "bytes",
-          "completedBytes",
-          "savePath",
-          "status"
-        ],
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "completedBytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "savePath": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FileStatus"
-          }
-        },
-        "additionalProperties": false
-      },
-      "FileStatus": {
-        "type": "string",
-        "enum": [
-          "idle",
-          "downloading",
-          "complete"
-        ]
-      }
-    }
-  }
 }

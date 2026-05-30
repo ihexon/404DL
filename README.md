@@ -4,8 +4,9 @@
 a browser-based control panel for searching supported torrent indexes, reviewing
 candidates, and managing downloads from one place.
 
-The app runs on your machine, stores files in a directory you choose, and keeps
-search results separate from active downloads until you explicitly start one.
+The app runs on your machine, stores files in a default download directory, and
+keeps search results separate from active downloads until you explicitly start
+one.
 
 ## Why Use It
 
@@ -41,7 +42,7 @@ The binary is written to `./bin/4dl`.
 Start the web UI:
 
 ```bash
-./bin/4dl --save-to ~/Downloads
+./bin/4dl
 ```
 
 Open the logged local URL in your browser. By default the app listens on
@@ -50,7 +51,7 @@ Open the logged local URL in your browser. By default the app listens on
 Use a fixed listen address when needed:
 
 ```bash
-./bin/4dl --listen 127.0.0.1:6570 --save-to ~/Downloads
+./bin/4dl --listen 127.0.0.1:6570 --download-dir ~/Downloads
 ```
 
 ## Dashboard
@@ -61,6 +62,8 @@ The web UI focuses on day-to-day download management:
 - Download cards show status, size, seeders, peers, files, and errors.
 - Runtime diagnostics help explain what the BitTorrent engine is doing.
 - Completed and paused downloads remain available after new searches.
+- Download tasks, metainfo, and torrent resume metadata are persisted outside
+  `--download-dir`; unfinished tasks are restored on restart.
 
 ## Configuration
 
@@ -68,11 +71,31 @@ Common options:
 
 ```text
 --listen 127.0.0.1:6570
---save-to ~/Downloads
+--download-dir ~/Downloads
+--state-dir ~/.config/4dl/custom-state
 --torrent-listen :42069
 --limit-size 50
 --timeout 8s
 ```
+
+`--download-dir` is optional and defaults to `~/Downloads`. It is the global
+default download directory; individual tasks may carry their own path through
+the HTTP API, matching Gopeed's `DownloadDir` plus task `Options.Path` model.
+
+`--state-dir` is optional. When omitted, 4dl uses the OS config directory for
+the app, such as `~/.config/4dl` on Linux. Application state, fetched metainfo,
+and torrent client metadata are stored there, outside the torrent payload
+namespace.
+
+The torrent listener defaults to `:42069`. Keep that port reachable through the
+host firewall and router for better peer discovery and download speed.
+Torrent downloads use a speed-first profile with aggressive peer discovery and
+connection limits, so expect higher file descriptor, memory, and network usage.
+The downloader writes incomplete payload data to `.part` files and only promotes
+them to final paths after anacrolix/torrent has accepted the pieces as complete.
+Task state and fetched metainfo live in `--state-dir`; file completion is derived
+from the payload layout and normal torrent verification instead of a separate
+persistent piece-completion database.
 
 Set `TORRENTCLAW_API_KEY` when TorrentClaw requires an API key.
 

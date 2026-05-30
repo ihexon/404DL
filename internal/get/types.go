@@ -9,7 +9,8 @@ import (
 
 type Config struct {
 	ListenAddr        string
-	SaveTo            string
+	DownloadDir       string
+	StateDir          string
 	TorrentListenAddr string
 	Searcher          Searcher
 	DefaultLimit      int
@@ -29,8 +30,9 @@ type SearchRequest struct {
 	Providers []string `json:"providers,omitempty"`
 }
 
-type CreateDownloadRequest struct {
+type CreateTaskRequest struct {
 	Result model.SearchResult `json:"result"`
+	Path   string             `json:"path,omitempty"`
 }
 
 type FileStatus string
@@ -41,16 +43,16 @@ const (
 	FileStatusComplete    FileStatus = "complete"
 )
 
-type TorrentDownloadStatus string
+type TaskStatus string
 
 const (
-	TorrentDownloadStatusIdle        TorrentDownloadStatus = "idle"
-	TorrentDownloadStatusDownloading TorrentDownloadStatus = "downloading"
-	TorrentDownloadStatusPaused      TorrentDownloadStatus = "paused"
-	TorrentDownloadStatusComplete    TorrentDownloadStatus = "complete"
+	TaskStatusIdle        TaskStatus = "idle"
+	TaskStatusDownloading TaskStatus = "downloading"
+	TaskStatusPaused      TaskStatus = "paused"
+	TaskStatusComplete    TaskStatus = "complete"
 )
 
-type TorrentItem struct {
+type TaskItem struct {
 	ID          string       `json:"id"`
 	Title       string       `json:"title"`
 	Provider    string       `json:"provider"`
@@ -61,6 +63,7 @@ type TorrentItem struct {
 	Peers       int          `json:"peers"`
 	Hash        string       `json:"hash,omitempty"`
 	MagnetURL   string       `json:"magnetUrl,omitempty"`
+	Path        string       `json:"path"`
 	Downloading bool         `json:"downloading"`
 	Download    DownloadView `json:"download"`
 	Error       string       `json:"error,omitempty"`
@@ -68,20 +71,20 @@ type TorrentItem struct {
 }
 
 type DownloadView struct {
-	Status         TorrentDownloadStatus `json:"status"`
-	CompletedBytes int64                 `json:"completedBytes"`
-	Bytes          int64                 `json:"bytes"`
+	Status         TaskStatus `json:"status"`
+	CompletedBytes int64      `json:"completedBytes"`
+	Bytes          int64      `json:"bytes"`
 }
 
 type AppState struct {
 	Updated       string               `json:"updated"`
-	SaveTo        string               `json:"saveTo"`
+	DownloadDir   string               `json:"downloadDir"`
 	SearchResults []model.SearchResult `json:"searchResults"`
-	Torrents      []TorrentState       `json:"torrents"`
+	Tasks         []TaskState          `json:"tasks"`
 }
 
-type TorrentState struct {
-	TorrentItem
+type TaskState struct {
+	TaskItem
 	Runtime RuntimeView `json:"runtime"`
 }
 

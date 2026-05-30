@@ -9,10 +9,11 @@ const (
 
 	FlagLimitSize     = "limit-size"
 	FlagListen        = "listen"
+	FlagStateDir      = "state-dir"
 	FlagTimeout       = "timeout"
-	FlagSaveTo        = "save-to"
+	FlagDownloadDir   = "download-dir"
 	FlagTorrentListen = "torrent-listen"
 
 	DefaultGetAddr           = "127.0.0.1:0"
-	DefaultTorrentListenAddr = ":0"
+	DefaultTorrentListenAddr = ":42069"
 )

@@ -27,31 +27,36 @@ type RuntimeSnapshot struct {
 }
 
 type RuntimeSummary struct {
-	InfoHash            string  `json:"infoHash,omitempty"`
-	Name                string  `json:"name,omitempty"`
-	MetadataReady       bool    `json:"metadataReady"`
-	BytesCompleted      int64   `json:"bytesCompleted"`
-	Length              int64   `json:"length"`
-	DownloadRate        float64 `json:"downloadRate"`
-	PendingPeers        int     `json:"pendingPeers"`
-	ActivePeers         int     `json:"activePeers"`
-	ConnectedSeeders    int     `json:"connectedSeeders"`
-	HalfOpenPeers       int     `json:"halfOpenPeers"`
-	PiecesComplete      int     `json:"piecesComplete"`
-	NumPieces           int     `json:"numPieces"`
-	ChunksReadUseful    int64   `json:"chunksReadUseful"`
-	ChunksReadWasted    int64   `json:"chunksReadWasted"`
-	BytesReadUsefulData int64   `json:"bytesReadUsefulData"`
-	BytesWrittenData    int64   `json:"bytesWrittenData"`
+	InfoHash            string          `json:"infoHash,omitempty"`
+	Name                string          `json:"name,omitempty"`
+	MetadataReady       bool            `json:"metadataReady"`
+	BytesCompleted      int64           `json:"bytesCompleted"`
+	Length              int64           `json:"length"`
+	Transfer            RuntimeTransfer `json:"transfer"`
+	PendingPeers        int             `json:"pendingPeers"`
+	ActivePeers         int             `json:"activePeers"`
+	ConnectedSeeders    int             `json:"connectedSeeders"`
+	HalfOpenPeers       int             `json:"halfOpenPeers"`
+	PiecesComplete      int             `json:"piecesComplete"`
+	NumPieces           int             `json:"numPieces"`
+	ChunksReadUseful    int64           `json:"chunksReadUseful"`
+	ChunksReadWasted    int64           `json:"chunksReadWasted"`
+	BytesReadUsefulData int64           `json:"bytesReadUsefulData"`
+	BytesWrittenData    int64           `json:"bytesWrittenData"`
 }
 
 type RuntimePeer struct {
-	Address      string  `json:"address"`
-	Source       string  `json:"source"`
-	Network      string  `json:"network,omitempty"`
-	Client       string  `json:"client,omitempty"`
+	Address   string          `json:"address"`
+	Source    string          `json:"source"`
+	Network   string          `json:"network,omitempty"`
+	Client    string          `json:"client,omitempty"`
+	Transfer  RuntimeTransfer `json:"transfer"`
+	Connected bool            `json:"connected"`
+}
+
+type RuntimeTransfer struct {
 	DownloadRate float64 `json:"downloadRate"`
-	Connected    bool    `json:"connected"`
+	UploadRate   float64 `json:"uploadRate"`
 }
 
 type RuntimePieceRun struct {
@@ -83,9 +88,6 @@ type RuntimeTorrentEvent struct {
 	Source   string `json:"source,omitempty"`
 	Network  string `json:"network,omitempty"`
 	Client   string `json:"client,omitempty"`
-	Piece    *int   `json:"piece,omitempty"`
-	Begin    *int   `json:"begin,omitempty"`
-	Length   *int   `json:"length,omitempty"`
 	Message  string `json:"message,omitempty"`
 	Error    string `json:"error,omitempty"`
 	DHTQuery string `json:"dhtQuery,omitempty"`
@@ -110,15 +112,6 @@ func (c *runtimeCollector) callbacks() torrent.Callbacks {
 		PeerConnClosed:        c.peerConnClosed,
 		PeerConnAdded: []func(*torrent.PeerConn){
 			c.peerConnAdded,
-		},
-		ReceivedUsefulData: []func(torrent.ReceivedUsefulDataEvent){
-			c.receivedUsefulData,
-		},
-		ReceivedRequested: []func(torrent.PeerMessageEvent){
-			c.receivedRequested,
-		},
-		SentRequest: []func(torrent.PeerRequestEvent){
-			c.sentRequest,
 		},
 		StatusUpdated: []func(torrent.StatusUpdatedEvent){
 			c.statusUpdated,
@@ -184,44 +177,6 @@ func (c *runtimeCollector) peerConnClosed(pc *torrent.PeerConn) {
 		return
 	}
 	c.append(peerConnInfoHash(pc), peerEvent("peer_closed", &pc.Peer))
-}
-
-func (c *runtimeCollector) receivedUsefulData(event torrent.ReceivedUsefulDataEvent) {
-	peer := event.Peer
-	if peer == nil || peer.Torrent() == nil || event.Message == nil {
-		return
-	}
-	pe := peerEvent("chunk_received", peer)
-	pe.Piece = intPtr(event.Message.Index.Int())
-	pe.Begin = intPtr(event.Message.Begin.Int())
-	pe.Length = intPtr(len(event.Message.Piece))
-	infoHash := peer.Torrent().InfoHash().HexString()
-	c.append(infoHash, pe)
-}
-
-func (c *runtimeCollector) receivedRequested(event torrent.PeerMessageEvent) {
-	peer := event.Peer
-	if peer == nil || peer.Torrent() == nil || event.Message == nil {
-		return
-	}
-	pe := peerEvent("requested_received", peer)
-	pe.Piece = intPtr(event.Message.Index.Int())
-	pe.Begin = intPtr(event.Message.Begin.Int())
-	pe.Length = intPtr(event.Message.Length.Int())
-	pe.Message = event.Message.Type.String()
-	c.append(peer.Torrent().InfoHash().HexString(), pe)
-}
-
-func (c *runtimeCollector) sentRequest(event torrent.PeerRequestEvent) {
-	peer := event.Peer
-	if peer == nil || peer.Torrent() == nil {
-		return
-	}
-	pe := peerEvent("request_sent", peer)
-	pe.Piece = intPtr(event.Index.Int())
-	pe.Begin = intPtr(event.Begin.Int())
-	pe.Length = intPtr(event.Length.Int())
-	c.append(peer.Torrent().InfoHash().HexString(), pe)
 }
 
 func (c *runtimeCollector) statusUpdated(event torrent.StatusUpdatedEvent) {
@@ -305,9 +260,9 @@ func peerEvent(eventType string, peer *torrent.Peer) RuntimeTorrentEvent {
 
 func torrentSummary(t *torrent.Torrent, peers []RuntimePeer) RuntimeSummary {
 	summary := RuntimeSummary{
-		InfoHash:     t.InfoHash().HexString(),
-		Name:         t.Name(),
-		DownloadRate: totalDownloadRate(peers),
+		InfoHash: t.InfoHash().HexString(),
+		Name:     t.Name(),
+		Transfer: totalTransfer(peers),
 	}
 	if t.Info() != nil {
 		summary.MetadataReady = true
@@ -328,18 +283,22 @@ func torrentSummary(t *torrent.Torrent, peers []RuntimePeer) RuntimeSummary {
 	return summary
 }
 
-func totalDownloadRate(peers []RuntimePeer) float64 {
-	var total float64
+func totalTransfer(peers []RuntimePeer) RuntimeTransfer {
+	var total RuntimeTransfer
 	for _, peer := range peers {
-		total += peer.DownloadRate
+		total.DownloadRate += peer.Transfer.DownloadRate
+		total.UploadRate += peer.Transfer.UploadRate
 	}
 	return total
 }
 
 func torrentPeers(peers []RuntimePeer) []RuntimePeer {
 	sort.SliceStable(peers, func(i, j int) bool {
-		if peers[i].DownloadRate != peers[j].DownloadRate {
-			return peers[i].DownloadRate > peers[j].DownloadRate
+		if peers[i].Transfer.DownloadRate != peers[j].Transfer.DownloadRate {
+			return peers[i].Transfer.DownloadRate > peers[j].Transfer.DownloadRate
+		}
+		if peers[i].Transfer.UploadRate != peers[j].Transfer.UploadRate {
+			return peers[i].Transfer.UploadRate > peers[j].Transfer.UploadRate
 		}
 		return peers[i].Address < peers[j].Address
 	})
@@ -355,11 +314,14 @@ func activePeers(t *torrent.Torrent) []RuntimePeer {
 	for _, conn := range conns {
 		stats := conn.Stats()
 		peer := RuntimePeer{
-			Address:      peerAddress(&conn.Peer),
-			Source:       peerSource(&conn.Peer),
-			Network:      peerNetwork(&conn.Peer),
-			DownloadRate: stats.DownloadRate,
-			Connected:    true,
+			Address: peerAddress(&conn.Peer),
+			Source:  peerSource(&conn.Peer),
+			Network: peerNetwork(&conn.Peer),
+			Transfer: RuntimeTransfer{
+				DownloadRate: stats.DownloadRate,
+				UploadRate:   stats.LastWriteUploadRate,
+			},
+			Connected: true,
 		}
 		if clientName, ok := conn.PeerClientName.Load().(string); ok {
 			peer.Client = strings.TrimSpace(clientName)
@@ -476,10 +438,6 @@ func peerConnInfoHash(pc *torrent.PeerConn) string {
 		return ""
 	}
 	return pc.Torrent().InfoHash().HexString()
-}
-
-func intPtr(value int) *int {
-	return &value
 }
 
 func addrString(addr interface{ String() string }) string {

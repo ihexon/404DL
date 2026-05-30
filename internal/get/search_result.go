@@ -7,13 +7,13 @@ import (
 	"4dl/internal/model"
 )
 
-func torrentItemFromSearchResult(result model.SearchResult) (TorrentItem, error) {
+func taskItemFromSearchResult(result model.SearchResult, path string) (TaskItem, error) {
 	hash := normalizeSearchResultHash(result.Hash)
 	if hash == "" {
-		return TorrentItem{}, errSearchResultMissingHash
+		return TaskItem{}, errSearchResultMissingHash
 	}
 
-	return TorrentItem{
+	return TaskItem{
 		ID:        hash,
 		Title:     result.Title,
 		Provider:  result.Provider,
@@ -24,6 +24,7 @@ func torrentItemFromSearchResult(result model.SearchResult) (TorrentItem, error)
 		Peers:     result.Peers,
 		Hash:      hash,
 		MagnetURL: normalizeSearchResultMagnet(result.MagnetURL),
+		Path:      path,
 	}, nil
 }
 

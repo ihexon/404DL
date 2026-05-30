@@ -174,7 +174,7 @@ h1 {
   font-size: 13px;
 }
 
-.torrentList {
+.taskList {
   overflow: hidden;
   border: 1px solid #d0d7de;
   border-radius: 8px;
@@ -187,19 +187,19 @@ h1 {
   text-align: center;
 }
 
-.torrentItem + .torrentItem {
+.taskItem + .taskItem {
   border-top: 1px solid #d8dee4;
 }
 
-.torrentItem.open {
+.taskItem.open {
   background: #fff;
 }
 
-.torrentItem.downloading .torrentSummary {
+.taskItem.downloading .taskSummary {
   box-shadow: inset 3px 0 0 #0969da;
 }
 
-.torrentSummary {
+.taskSummary {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto auto;
   align-items: center;
@@ -209,11 +209,11 @@ h1 {
   cursor: pointer;
 }
 
-.torrentSummary:hover {
+.taskSummary:hover {
   background: #f6f8fa;
 }
 
-.torrentSummary:focus-visible {
+.taskSummary:focus-visible {
   outline: 2px solid #0969da;
   outline-offset: -2px;
 }
@@ -232,11 +232,11 @@ h1 {
   transform: rotate(90deg);
 }
 
-.torrentBody {
+.taskBody {
   min-width: 0;
 }
 
-.torrentBody h2 {
+.taskBody h2 {
   margin: 0;
   color: #0969da;
   font-size: 15px;
@@ -276,7 +276,7 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-.torrentActions,
+.taskActions,
 .assetActions {
   display: flex;
   gap: 6px;
@@ -326,17 +326,17 @@ h1 {
   color: #1a7f37;
 }
 
-.torrentAction.start:not(:disabled) {
+.taskAction.start:not(:disabled) {
   border-color: #a6e3b7;
   color: #1a7f37;
 }
 
-.torrentAction.pause:not(:disabled) {
+.taskAction.pause:not(:disabled) {
   border-color: #d4a72c;
   color: #7d4e00;
 }
 
-.torrentAction.delete:not(:disabled) {
+.taskAction.delete:not(:disabled) {
   border-color: #ffcecb;
   color: #cf222e;
 }
@@ -377,7 +377,7 @@ h1 {
   flex: 0 0 auto;
 }
 
-.torrentDetails {
+.taskDetails {
   display: grid;
   gap: 12px;
   padding: 14px 16px 16px 54px;
@@ -469,7 +469,7 @@ h1 {
   padding: 0;
 }
 
-.torrentInfoBody {
+.taskInfoBody {
   display: grid;
   gap: 8px;
 }
@@ -782,17 +782,17 @@ h1 {
     flex: 1 1 0;
   }
 
-  .torrentSummary {
+  .taskSummary {
     grid-template-columns: 28px minmax(0, 1fr) auto;
     align-items: start;
   }
 
-  .torrentActions {
+  .taskActions {
     grid-column: 2 / -1;
     justify-content: flex-start;
   }
 
-  .torrentDetails {
+  .taskDetails {
     padding-left: 16px;
   }
 
@@ -803,12 +803,12 @@ h1 {
 }
 
 @media (max-width: 560px) {
-  .torrentSummary {
+  .taskSummary {
     grid-template-columns: 28px minmax(0, 1fr);
   }
 
-  .torrentSummary .status,
-  .torrentActions {
+  .taskSummary .status,
+  .taskActions {
     grid-column: 2 / -1;
   }
 

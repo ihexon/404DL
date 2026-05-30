@@ -17,7 +17,8 @@ func runWeb(c *cli.Context) error {
 	upstreamClient := &http.Client{Timeout: c.Duration(FlagTimeout)}
 	cfg := downloadui.Config{
 		ListenAddr:        c.String(FlagListen),
-		SaveTo:            c.String(FlagSaveTo),
+		DownloadDir:       c.String(FlagDownloadDir),
+		StateDir:          c.String(FlagStateDir),
 		TorrentListenAddr: c.String(FlagTorrentListen),
 		Searcher:          newSearchAggregator(upstreamClient),
 		DefaultLimit:      c.Int(FlagLimitSize),
@@ -25,7 +26,8 @@ func runWeb(c *cli.Context) error {
 
 	logrus.WithFields(logrus.Fields{
 		"listen":           cfg.ListenAddr,
-		"save_to":          cfg.SaveTo,
+		"download_dir":     cfg.DownloadDir,
+		"state_dir":        cfg.StateDir,
 		"upstream_timeout": upstreamClient.Timeout.String(),
 		"default_limit":    cfg.DefaultLimit,
 	}).Info("web UI starting")

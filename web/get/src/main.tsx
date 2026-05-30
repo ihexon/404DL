@@ -21,7 +21,7 @@ import {
 import "./styles.css";
 
 type FileStatus = "idle" | "downloading" | "complete";
-type TorrentDownloadStatus = "idle" | "downloading" | "paused" | "complete";
+type TaskStatus = "idle" | "downloading" | "paused" | "complete";
 
 type FileItem = {
   path: string;
@@ -31,7 +31,7 @@ type FileItem = {
   status: FileStatus;
 };
 
-type TorrentItem = {
+type TaskItem = {
   id: string;
   title: string;
   provider: string;
@@ -42,6 +42,7 @@ type TorrentItem = {
   peers: number;
   hash?: string;
   magnetUrl?: string;
+  path: string;
   downloading: boolean;
   download: DownloadView;
   error?: string;
@@ -62,22 +63,22 @@ type SearchResult = {
 
 type AppState = {
   updated: string;
-  saveTo: string;
+  downloadDir: string;
   searchResults: SearchResult[];
-  torrents: TorrentState[];
+  tasks: TaskState[];
 };
 
 type DownloadView = {
-  status: TorrentDownloadStatus;
+  status: TaskStatus;
   completedBytes: number;
   bytes: number;
 };
 
-type TorrentState = TorrentItem & {
+type TaskState = TaskItem & {
   runtime: RuntimeView;
 };
 
-type TorrentListItem = TorrentState & {
+type TaskListItem = TaskState & {
   source: "download" | "search";
   searchResult?: SearchResult;
 };
@@ -88,14 +89,14 @@ type RuntimeView = {
   error?: string;
 };
 
-type TorrentStore = {
-  downloads: TorrentState[];
+type TaskStore = {
+  downloads: TaskState[];
   error: string;
   inFlightCommands: Set<string>;
   searchResults: SearchResult[];
-  downloadSearchResult: (result: SearchResult) => Promise<void>;
-  loadTorrent: (id: string) => Promise<void>;
-  runTorrentAction: (item: TorrentState, action: TorrentAction) => Promise<void>;
+  createSearchResultTask: (result: SearchResult) => Promise<void>;
+  loadTask: (id: string) => Promise<void>;
+  runTaskAction: (item: TaskState, action: TaskAction) => Promise<void>;
 };
 
 type RuntimeSnapshot = {
@@ -105,7 +106,7 @@ type RuntimeSnapshot = {
   peers: RuntimePeer[];
   pieceRuns: RuntimePieceRun[];
   dht: RuntimeDHTServer[];
-  events: RuntimeTorrentEvent[];
+  events: RuntimeTaskEvent[];
 };
 
 type RuntimeSummary = {
@@ -114,7 +115,7 @@ type RuntimeSummary = {
   metadataReady: boolean;
   bytesCompleted: number;
   length: number;
-  downloadRate: number;
+  transfer: TransferStats;
   pendingPeers: number;
   activePeers: number;
   connectedSeeders: number;
@@ -127,12 +128,17 @@ type RuntimeSummary = {
   bytesWrittenData: number;
 };
 
+type TransferStats = {
+  downloadRate: number;
+  uploadRate: number;
+};
+
 type RuntimePeer = {
   address: string;
   source: string;
   network?: string;
   client?: string;
-  downloadRate: number;
+  transfer: TransferStats;
   connected: boolean;
 };
 
@@ -157,7 +163,7 @@ type RuntimeDHTServer = {
   badNodes: number;
 };
 
-type RuntimeTorrentEvent = {
+type RuntimeTaskEvent = {
   time: string;
   type: string;
   infoHash?: string;
@@ -165,17 +171,14 @@ type RuntimeTorrentEvent = {
   source?: string;
   network?: string;
   client?: string;
-  piece?: number;
-  begin?: number;
-  length?: number;
   message?: string;
   error?: string;
   dhtQuery?: string;
   dhtNode?: string;
 };
 
-type TorrentAction = "start" | "pause" | "delete";
-type TorrentView = "search" | "downloading" | "complete";
+type TaskAction = "start" | "pause" | "delete";
+type TaskView = "search" | "downloading" | "complete";
 
 class HTTPError extends Error {
   readonly status: number;
@@ -198,35 +201,36 @@ const fallbackPieceMapColumns = 32;
 function App() {
   const {
     downloads,
-    downloadSearchResult,
+    createSearchResultTask,
     error,
     inFlightCommands,
-    loadTorrent,
-    runTorrentAction,
+    loadTask,
+    runTaskAction,
     searchResults
-  } = useTorrents();
+  } = useTasks();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [view, setView] = useState<TorrentView>("search");
+  const [view, setView] = useState<TaskView>("search");
 
-  const items = useMemo(() => torrentListItems(searchResults, downloads, view), [downloads, searchResults, view]);
+  const items = useMemo(() => taskListItems(searchResults, downloads, view), [downloads, searchResults, view]);
+  const downloadCount = useMemo(() => downloads.filter(isCountedDownload).length, [downloads]);
 
-  function toggle(item: TorrentListItem) {
+  function toggle(item: TaskListItem) {
     const willOpen = !expanded[item.id];
     setExpanded((current) => ({ ...current, [item.id]: willOpen }));
     if (!willOpen || item.source !== "download") {
       return;
     }
-    void loadTorrent(item.id);
+    void loadTask(item.id);
   }
 
-  async function runListAction(item: TorrentListItem, action: TorrentAction) {
+  async function runListAction(item: TaskListItem, action: TaskAction) {
     if (item.source === "search") {
       if (action === "start" && item.searchResult) {
-        await downloadSearchResult(item.searchResult);
+        await createSearchResultTask(item.searchResult);
       }
       return;
     }
-    await runTorrentAction(item, action);
+    await runTaskAction(item, action);
   }
 
   return (
@@ -234,7 +238,7 @@ function App() {
       <header className="topbar">
         <div>
           <h1>4dl</h1>
-          <div className="meta">{downloads.length} downloads</div>
+          <div className="meta">{formatCount(downloadCount, "download")}</div>
         </div>
       </header>
 
@@ -248,31 +252,31 @@ function App() {
       />
 
       <div className="listToolbar">
-        <div className="viewTabs" aria-label="Torrent view">
+        <div className="viewTabs" aria-label="Task view">
           <ViewTab current={view} onChange={setView} value="search">Search</ViewTab>
           <ViewTab current={view} onChange={setView} value="downloading">Downloading</ViewTab>
           <ViewTab current={view} onChange={setView} value="complete">Complete</ViewTab>
         </div>
       </div>
 
-      <TorrentList
+      <TaskList
         items={items}
         inFlightCommands={inFlightCommands}
         expanded={expanded}
-        onTorrentAction={runListAction}
+        onTaskAction={runListAction}
         onToggle={toggle}
       />
     </main>
   );
 }
 
-function useTorrents(): TorrentStore {
+function useTasks(): TaskStore {
   const [state, setState] = useState<AppState | null>(null);
-  const [detailsByID, setDetailsByID] = useState<Map<string, TorrentState>>(() => new Map());
+  const [detailsByID, setDetailsByID] = useState<Map<string, TaskState>>(() => new Map());
   const [error, setError] = useState("");
   const [inFlightCommands, setInFlightCommands] = useState<Set<string>>(new Set());
   const inFlightCommandsRef = useRef<Set<string>>(new Set());
-  const detailsRef = useRef<Map<string, TorrentState>>(new Map());
+  const detailsRef = useRef<Map<string, TaskState>>(new Map());
 
   useEffect(() => {
     detailsRef.current = detailsByID;
@@ -280,11 +284,11 @@ function useTorrents(): TorrentStore {
 
   const mergeAppState = useCallback((next: AppState) => {
     const details = detailsRef.current;
-    next.torrents = next.torrents.map((item) => mergeListTorrent(item, details.get(item.id)));
+    next.tasks = next.tasks.map((item) => mergeListTask(item, details.get(item.id)));
     setState(next);
   }, []);
 
-  const mergeTorrent = useCallback((next: TorrentState) => {
+  const mergeTask = useCallback((next: TaskState) => {
     setDetailsByID((current) => {
       const updated = new Map(current);
       updated.set(next.id, next);
@@ -296,44 +300,44 @@ function useTorrents(): TorrentStore {
       }
       return {
         ...current,
-        torrents: current.torrents.map((item) => item.id === next.id ? next : item)
+        tasks: current.tasks.map((item) => item.id === next.id ? next : item)
       };
     });
   }, []);
 
-  const loadTorrent = useCallback(
+  const loadTask = useCallback(
     async (id: string) => {
-      const next = await getJSON<TorrentState>(torrentEndpoint(id));
-      mergeTorrent(next);
+      const next = await getJSON<TaskState>(taskEndpoint(id));
+      mergeTask(next);
     },
-    [mergeTorrent]
+    [mergeTask]
   );
 
   const showServiceError = useCallback((err: unknown) => {
     setError(serviceErrorMessage(err));
   }, []);
 
-  const runTorrentAction = useCallback(
-    async (item: TorrentState, action: TorrentAction) => {
-      const commandKey = torrentActionKey(item.id, action);
+  const runTaskAction = useCallback(
+    async (item: TaskState, action: TaskAction) => {
+      const commandKey = taskActionKey(item.id, action);
       if (inFlightCommandsRef.current.has(commandKey)) {
         return;
       }
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const next = await postJSON<TorrentState>(torrentActionEndpoint(item.id, action), {});
-        mergeTorrent(next);
+        const next = await postJSON<TaskState>(taskActionEndpoint(item.id, action), {});
+        mergeTask(next);
       } catch (err) {
         showServiceError(err);
       } finally {
         clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       }
     },
-    [mergeTorrent, showServiceError]
+    [mergeTask, showServiceError]
   );
 
-  const downloadSearchResult = useCallback(
+  const createSearchResultTask = useCallback(
     async (result: SearchResult) => {
       if (!result.hash) {
         return;
@@ -345,21 +349,21 @@ function useTorrents(): TorrentStore {
       addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       setError("");
       try {
-        const item = await postJSON<TorrentState>(torrentListEndpoint(), { result });
-        mergeTorrent(item);
-        const next = await postJSON<TorrentState>(torrentActionEndpoint(item.id, "start"), {});
-        mergeTorrent(next);
+        const item = await postJSON<TaskState>(taskListEndpoint(), { result });
+        mergeTask(item);
+        const next = await postJSON<TaskState>(taskActionEndpoint(item.id, "start"), {});
+        mergeTask(next);
       } catch (err) {
         showServiceError(err);
       } finally {
         clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
       }
     },
-    [mergeTorrent, showServiceError]
+    [mergeTask, showServiceError]
   );
 
   useEffect(() => {
-    const source = new EventSource(torrentListStreamEndpoint());
+    const source = new EventSource(taskListStreamEndpoint());
     source.addEventListener("open", () => setError(""));
     source.addEventListener("state", (event) => {
       mergeAppState(JSON.parse(event.data) as AppState);
@@ -368,13 +372,13 @@ function useTorrents(): TorrentStore {
   }, [mergeAppState]);
 
   return {
-    downloads: state?.torrents ?? [],
+    downloads: state?.tasks ?? [],
     error,
     inFlightCommands,
     searchResults: state?.searchResults ?? [],
-    downloadSearchResult,
-    loadTorrent,
-    runTorrentAction
+    createSearchResultTask,
+    loadTask,
+    runTaskAction
   };
 }
 
@@ -410,7 +414,7 @@ function SearchPanel({ onSearchStart }: { onSearchStart: () => void }) {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search torrents"
+            placeholder="Search downloads"
           />
         </label>
         <label className="limitField">
@@ -433,29 +437,29 @@ function SearchPanel({ onSearchStart }: { onSearchStart: () => void }) {
   );
 }
 
-function TorrentList({
+function TaskList({
   items,
   inFlightCommands,
   expanded,
-  onTorrentAction,
+  onTaskAction,
   onToggle
 }: {
-  items: TorrentListItem[];
+  items: TaskListItem[];
   inFlightCommands: Set<string>;
   expanded: Record<string, boolean>;
-  onTorrentAction: (item: TorrentListItem, action: TorrentAction) => Promise<void>;
-  onToggle: (item: TorrentListItem) => void;
+  onTaskAction: (item: TaskListItem, action: TaskAction) => Promise<void>;
+  onToggle: (item: TaskListItem) => void;
 }) {
   return (
-    <section className="torrentList" aria-label="Torrents">
-      {items.length === 0 && <div className="emptyBox">No torrents</div>}
+    <section className="taskList" aria-label="Tasks">
+      {items.length === 0 && <div className="emptyBox">No tasks</div>}
       {items.map((item) => (
-        <TorrentCard
+        <TaskCard
           key={item.id}
           item={item}
           inFlightCommands={inFlightCommands}
           open={Boolean(expanded[item.id])}
-          onTorrentAction={onTorrentAction}
+          onTaskAction={onTaskAction}
           onToggle={() => onToggle(item)}
         />
       ))}
@@ -463,23 +467,23 @@ function TorrentList({
   );
 }
 
-const TorrentCard = React.memo(function TorrentCard({
+const TaskCard = React.memo(function TaskCard({
   item,
   inFlightCommands,
   open,
-  onTorrentAction,
+  onTaskAction,
   onToggle
 }: {
-  item: TorrentListItem;
+  item: TaskListItem;
   inFlightCommands: Set<string>;
   open: boolean;
-  onTorrentAction: (item: TorrentListItem, action: TorrentAction) => Promise<void>;
+  onTaskAction: (item: TaskListItem, action: TaskAction) => Promise<void>;
   onToggle: () => void;
 }) {
   return (
-    <article className={`torrentItem ${open ? "open" : ""} ${item.downloading ? "downloading" : ""}`}>
+    <article className={`taskItem ${open ? "open" : ""} ${item.downloading ? "downloading" : ""}`}>
       <div
-        className="torrentSummary"
+        className="taskSummary"
         onClick={onToggle}
         onKeyDown={(event) => handleToggleKeyDown(event, onToggle)}
         role="button"
@@ -489,7 +493,7 @@ const TorrentCard = React.memo(function TorrentCard({
           <ChevronRight size={18} />
         </div>
 
-        <div className="torrentBody">
+        <div className="taskBody">
           <h2>{item.title || "Untitled"}</h2>
           <div className="metaPills">
             <MetaPill icon={<Database size={14} />} value={item.provider || "-"} />
@@ -502,31 +506,31 @@ const TorrentCard = React.memo(function TorrentCard({
 
         <DownloadStatus status={item.download.status} />
 
-        <div className="torrentActions" onClick={(event) => event.stopPropagation()}>
-          <TorrentActionButton
+        <div className="taskActions" onClick={(event) => event.stopPropagation()}>
+          <TaskActionButton
             action="start"
             icon={<Play size={16} />}
             inFlightCommands={inFlightCommands}
             item={item}
-            onAction={onTorrentAction}
+            onAction={onTaskAction}
             title={item.source === "search" ? "Start download" : item.download.status === "paused" ? "Continue" : "Start"}
           />
           {item.source === "download" && (
             <>
-              <TorrentActionButton
+              <TaskActionButton
                 action="pause"
                 icon={<Pause size={16} />}
                 inFlightCommands={inFlightCommands}
                 item={item}
-                onAction={onTorrentAction}
+                onAction={onTaskAction}
                 title="Pause"
               />
-              <TorrentActionButton
+              <TaskActionButton
                 action="delete"
                 icon={<Trash2 size={16} />}
                 inFlightCommands={inFlightCommands}
                 item={item}
-                onAction={onTorrentAction}
+                onAction={onTaskAction}
                 title="Delete local data"
               />
             </>
@@ -538,7 +542,7 @@ const TorrentCard = React.memo(function TorrentCard({
       </div>
 
       {open && (
-        <TorrentDetails
+        <TaskDetails
           item={item}
         />
       )}
@@ -571,11 +575,11 @@ function MetaPill({
   );
 }
 
-function TorrentDetails({ item }: { item: TorrentState }) {
+function TaskDetails({ item }: { item: TaskState }) {
   return (
-    <div className="torrentDetails">
+    <div className="taskDetails">
       <div className="detailsGrid overviewGrid">
-        <TorrentInfoPanel item={item} />
+        <TaskInfoPanel item={item} />
         <RuntimePanel runtime={item.runtime} />
       </div>
       <FilePanel item={item} />
@@ -588,13 +592,13 @@ function TorrentDetails({ item }: { item: TorrentState }) {
   );
 }
 
-function TorrentInfoPanel({ item }: { item: TorrentItem }) {
+function TaskInfoPanel({ item }: { item: TaskItem }) {
   return (
     <DetailBox
       icon={<Database size={16} />}
-      title="Torrent"
+      title="Task"
     >
-      <div className="torrentInfoBody">
+      <div className="taskInfoBody">
         <dl className="detailGrid">
           <DetailItem label="Provider" value={item.provider || "-"} />
           <DetailItem label="Size" value={formatBytes(item.bytes)} />
@@ -602,6 +606,7 @@ function TorrentInfoPanel({ item }: { item: TorrentItem }) {
           <DetailItem label="Seeds / Peers" value={`${item.seeders}/${item.peers}`} />
           <DetailItem label="Category" value={item.category || "-"} />
         </dl>
+        <CodeBlock label="Path" value={item.path || ""} />
         <CodeBlock label="Info Hash" value={item.hash || ""} />
         <CodeBlock
           action={
@@ -704,7 +709,8 @@ function RuntimeSummaryGrid({ summary }: { summary: RuntimeSummary }) {
   return (
     <div className="runtimeStats">
       <DetailItem label="Progress" value={progress} />
-      <DetailItem label="Download speed" value={formatRate(summary.downloadRate)} />
+      <DetailItem label="Download speed" value={formatRate(summary.transfer.downloadRate)} />
+      <DetailItem label="Upload speed" value={formatRate(summary.transfer.uploadRate)} />
       <DetailItem label="Active peers" value={`${summary.activePeers}`} />
       <DetailItem label="Pending / Half-open" value={`${summary.pendingPeers}/${summary.halfOpenPeers}`} />
       <DetailItem label="Seeders" value={`${summary.connectedSeeders}`} />
@@ -918,7 +924,7 @@ function RuntimePeers({ runtime }: { runtime: RuntimeView }) {
               <span className="monoText">{peer.address}</span>
               <span>{peer.connected ? peer.network || "peer" : "known"}</span>
               <span>{peerSourceLabel(peer.source)}</span>
-              <span>{formatRate(peer.downloadRate)}</span>
+              <span>{formatRate(peer.transfer.downloadRate)}</span>
               <span>{peer.client || "-"}</span>
             </div>
           ))}
@@ -997,9 +1003,9 @@ function ViewTab({
   value
 }: {
   children: React.ReactNode;
-  current: TorrentView;
-  onChange: (value: TorrentView) => void;
-  value: TorrentView;
+  current: TaskView;
+  onChange: (value: TaskView) => void;
+  value: TaskView;
 }) {
   return (
     <button
@@ -1012,7 +1018,7 @@ function ViewTab({
   );
 }
 
-function DownloadStatus({ status }: { status: TorrentDownloadStatus }) {
+function DownloadStatus({ status }: { status: TaskStatus }) {
   if (status === "downloading") {
     return (
       <span className="status downloading">
@@ -1032,7 +1038,7 @@ function DownloadStatus({ status }: { status: TorrentDownloadStatus }) {
   );
 }
 
-function TorrentActionButton({
+function TaskActionButton({
   action,
   icon,
   inFlightCommands,
@@ -1040,20 +1046,20 @@ function TorrentActionButton({
   onAction,
   title
 }: {
-  action: TorrentAction;
+  action: TaskAction;
   icon: React.ReactNode;
   inFlightCommands: Set<string>;
-  item: TorrentListItem;
-  onAction: (item: TorrentListItem, action: TorrentAction) => Promise<void>;
+  item: TaskListItem;
+  onAction: (item: TaskListItem, action: TaskAction) => Promise<void>;
   title: string;
 }) {
-  const commandKey = torrentActionKey(item.id, action);
+  const commandKey = taskActionKey(item.id, action);
   const searchCommandKey = item.hash ? searchResultHashActionKey(item.hash) : "";
   const busy = inFlightCommands.has(commandKey) || (action === "start" && searchCommandKey !== "" && inFlightCommands.has(searchCommandKey));
-  const disabled = busy || !canRunTorrentAction(item, action);
+  const disabled = busy || !canRunTaskAction(item, action);
   return (
     <button
-      className={`iconButton torrentAction ${action}`}
+      className={`iconButton taskAction ${action}`}
       disabled={disabled}
       onClick={() => { void onAction(item, action); }}
       title={title}
@@ -1063,7 +1069,7 @@ function TorrentActionButton({
   );
 }
 
-function canRunTorrentAction(item: TorrentListItem, action: TorrentAction): boolean {
+function canRunTaskAction(item: TaskListItem, action: TaskAction): boolean {
   if (!item.hash) {
     return false;
   }
@@ -1080,7 +1086,7 @@ function canRunTorrentAction(item: TorrentListItem, action: TorrentAction): bool
   }
 }
 
-function FilePanel({ item }: { item: TorrentState }) {
+function FilePanel({ item }: { item: TaskState }) {
   const files = item.files ?? [];
   const meta = files.length > 0 ? `${files.length}` : undefined;
 
@@ -1189,14 +1195,14 @@ function CopyButton({
   );
 }
 
-function torrentListItems(searchResults: SearchResult[], downloads: TorrentState[], view: TorrentView): TorrentListItem[] {
+function taskListItems(searchResults: SearchResult[], downloads: TaskState[], view: TaskView): TaskListItem[] {
   if (view !== "search") {
     return downloads
       .filter((item) => item.download.status === view)
-      .map((item): TorrentListItem => ({ ...item, source: "download" }));
+      .map((item): TaskListItem => ({ ...item, source: "download" }));
   }
-  const downloadsByHash = new Map(downloads.map((item) => [item.hash, item]).filter(([hash]) => Boolean(hash)) as [string, TorrentState][]);
-  const currentSearchItems: TorrentListItem[] = [];
+  const downloadsByHash = new Map(downloads.map((item) => [item.hash, item]).filter(([hash]) => Boolean(hash)) as [string, TaskState][]);
+  const currentSearchItems: TaskListItem[] = [];
   for (const result of searchResults) {
     if (!result.hash) {
       continue;
@@ -1207,7 +1213,7 @@ function torrentListItems(searchResults: SearchResult[], downloads: TorrentState
   return currentSearchItems;
 }
 
-function searchResultListItem(result: SearchResult): TorrentListItem {
+function searchResultListItem(result: SearchResult): TaskListItem {
   const hash = result.hash || "";
   return {
     id: hash || `search:${result.provider}:${result.title}`,
@@ -1220,6 +1226,7 @@ function searchResultListItem(result: SearchResult): TorrentListItem {
     peers: result.peers,
     hash,
     magnetUrl: result.magnetUrl,
+    path: "",
     downloading: false,
     download: {
       status: "idle",
@@ -1234,7 +1241,11 @@ function searchResultListItem(result: SearchResult): TorrentListItem {
   };
 }
 
-function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): TorrentState {
+function isCountedDownload(item: TaskState): boolean {
+  return item.downloading || item.download.status !== "idle" || item.download.completedBytes > 0;
+}
+
+function mergeListTask(listItem: TaskState, detailItem?: TaskState): TaskState {
   if (!detailItem || detailItem.downloading !== listItem.downloading) {
     return listItem;
   }
@@ -1245,7 +1256,7 @@ function mergeListTorrent(listItem: TorrentState, detailItem?: TorrentState): To
   };
 }
 
-function torrentActionKey(id: string, action: TorrentAction): string {
+function taskActionKey(id: string, action: TaskAction): string {
   return `${id}\0${action}`;
 }
 
@@ -1285,24 +1296,24 @@ function clearInFlightCommand(
   });
 }
 
-function torrentListEndpoint(): string {
-  return "/api/torrents";
+function taskListEndpoint(): string {
+  return "/api/tasks";
 }
 
 function searchEndpoint(): string {
   return "/api/search";
 }
 
-function torrentListStreamEndpoint(): string {
-  return `${torrentListEndpoint()}/stream`;
+function taskListStreamEndpoint(): string {
+  return `${taskListEndpoint()}/stream`;
 }
 
-function torrentEndpoint(id: string): string {
-  return `/api/torrents/${encodeURIComponent(id)}`;
+function taskEndpoint(id: string): string {
+  return `/api/tasks/${encodeURIComponent(id)}`;
 }
 
-function torrentActionEndpoint(id: string, action: TorrentAction): string {
-  return `${torrentEndpoint(id)}/${action}`;
+function taskActionEndpoint(id: string, action: TaskAction): string {
+  return `${taskEndpoint(id)}/${action}`;
 }
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -1409,6 +1420,10 @@ function formatRate(value?: number): string {
   return bytes === "-" ? "-" : `${bytes}/s`;
 }
 
+function formatCount(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
 function peerSourceLabel(value: string): string {
   switch (value) {
     case "Tr":
@@ -1432,13 +1447,7 @@ function peerSourceLabel(value: string): string {
   }
 }
 
-function eventLabel(event: RuntimeTorrentEvent): string {
-  if (event.type === "chunk_received") {
-    return `${event.peer || "-"} piece ${event.piece} +${event.begin} ${formatBytes(event.length)}`;
-  }
-  if (event.type === "request_sent") {
-    return `request ${event.peer || "-"} piece ${event.piece} ${formatBytes(event.length)}`;
-  }
+function eventLabel(event: RuntimeTaskEvent): string {
   if (event.type === "dht_query") {
     return `DHT ${event.dhtQuery || "query"} ${event.dhtNode || ""}`.trim();
   }
