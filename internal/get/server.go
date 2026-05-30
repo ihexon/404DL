@@ -235,7 +235,13 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, APIError{Error: "invalid JSON request body"})
 		return
 	}
-	state, err := s.manager.CreateTask(req.Result, req.Path)
+	var state TaskState
+	var err error
+	if strings.TrimSpace(req.MagnetURL) != "" {
+		state, err = s.manager.CreateMagnetTask(req.Title, req.MagnetURL, req.Path)
+	} else {
+		state, err = s.manager.CreateTask(req.Result, req.Path)
+	}
 	if err != nil {
 		if errors.Is(err, errSearchResultMissingHash) {
 			writeJSON(w, http.StatusBadRequest, APIError{Error: err.Error()})

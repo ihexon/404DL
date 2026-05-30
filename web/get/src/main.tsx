@@ -78,10 +78,7 @@ type TaskState = TaskItem & {
   runtime: RuntimeView;
 };
 
-type TaskListItem = TaskState & {
-  source: "download" | "search";
-  searchResult?: SearchResult;
-};
+type TaskListItem = TaskState;
 
 type RuntimeView = {
   status: "inactive" | "ready" | "error";
@@ -94,9 +91,11 @@ type TaskStore = {
   error: string;
   inFlightCommands: Set<string>;
   searchResults: SearchResult[];
+  createMagnetTask: (magnetUrl: string) => Promise<TaskState | null>;
   createSearchResultTask: (result: SearchResult) => Promise<void>;
   loadTask: (id: string) => Promise<void>;
   runTaskAction: (item: TaskState, action: TaskAction, options?: TaskActionOptions) => Promise<void>;
+  search: (query: string, limit: number) => Promise<void>;
 };
 
 type RuntimeSnapshot = {
@@ -178,7 +177,7 @@ type RuntimeTaskEvent = {
 };
 
 type TaskAction = "continue" | "pause" | "delete";
-type TaskView = "search" | "downloading" | "complete";
+type TaskView = "search" | "active" | "done";
 type TaskActionOptions = {
   force?: boolean;
 };
@@ -206,37 +205,35 @@ const fallbackPieceMapColumns = 32;
 function App() {
   const {
     downloads,
+    createMagnetTask,
     createSearchResultTask,
     error,
     inFlightCommands,
     loadTask,
     runTaskAction,
+    search,
     searchResults
   } = useTasks();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [view, setView] = useState<TaskView>("search");
+  const [view, setView] = useState<TaskView>("active");
   const [pendingDelete, setPendingDelete] = useState<TaskListItem | null>(null);
   const [keepDeleteFiles, setKeepDeleteFiles] = useState(() => localStorage.getItem(deleteKeepFilesKey) !== "false");
 
-  const items = useMemo(() => taskListItems(searchResults, downloads, view), [downloads, searchResults, view]);
-  const downloadCount = useMemo(() => downloads.filter(isCountedDownload).length, [downloads]);
+  const items = useMemo(() => taskListItems(downloads, view), [downloads, view]);
+  const activeCount = useMemo(() => downloads.filter(isActiveTask).length, [downloads]);
+  const doneCount = downloads.length - activeCount;
+  const hasSearchResults = searchResults.length > 0;
 
   function toggle(item: TaskListItem) {
     const willOpen = !expanded[item.id];
     setExpanded((current) => ({ ...current, [item.id]: willOpen }));
-    if (!willOpen || item.source !== "download") {
+    if (!willOpen) {
       return;
     }
     void loadTask(item.id);
   }
 
   async function runListAction(item: TaskListItem, action: TaskAction) {
-    if (item.source === "search") {
-      if (action === "continue" && item.searchResult) {
-        await createSearchResultTask(item.searchResult);
-      }
-      return;
-    }
     if (action === "delete") {
       setPendingDelete(item);
       return;
@@ -259,34 +256,47 @@ function App() {
       <header className="topbar">
         <div>
           <h1>4dl</h1>
-          <div className="meta">{formatCount(downloadCount, "download")}</div>
+          <div className="meta">{formatCount(activeCount, "active")} · {formatCount(doneCount, "done")}</div>
         </div>
       </header>
 
       {error && <div className="banner">{error}</div>}
 
-      <SearchPanel
-        onSearchStart={() => {
-          setView("search");
-          setExpanded({});
+      <CreatePanel
+        createMagnetTask={createMagnetTask}
+        onTaskCreated={(task) => {
+          setView("active");
+          setExpanded((current) => ({ ...current, [task.id]: true }));
+          void loadTask(task.id);
         }}
+        onSearchComplete={() => setView("search")}
+        search={search}
+        searchResults={searchResults}
       />
 
       <div className="listToolbar">
         <div className="viewTabs" aria-label="Task view">
-          <ViewTab current={view} onChange={setView} value="search">Search</ViewTab>
-          <ViewTab current={view} onChange={setView} value="downloading">Downloading</ViewTab>
-          <ViewTab current={view} onChange={setView} value="complete">Complete</ViewTab>
+          <ViewTab current={view} disabled={!hasSearchResults} onChange={setView} value="search">Search</ViewTab>
+          <ViewTab current={view} onChange={setView} value="active">Active</ViewTab>
+          <ViewTab current={view} onChange={setView} value="done">Done</ViewTab>
         </div>
       </div>
 
-      <TaskList
-        items={items}
-        inFlightCommands={inFlightCommands}
-        expanded={expanded}
-        onTaskAction={runListAction}
-        onToggle={toggle}
-      />
+      {view === "search" ? (
+        <SearchWorkspace
+          inFlightCommands={inFlightCommands}
+          onCreate={createSearchResultTask}
+          results={searchResults}
+        />
+      ) : (
+        <TaskList
+          items={items}
+          inFlightCommands={inFlightCommands}
+          expanded={expanded}
+          onTaskAction={runListAction}
+          onToggle={toggle}
+        />
+      )}
 
       {pendingDelete && (
         <DeleteTaskDialog
@@ -369,7 +379,7 @@ function useTasks(): TaskStore {
   );
 
   const createSearchResultTask = useCallback(
-    async (result: SearchResult) => {
+    async (result: SearchResult): Promise<void> => {
       if (!result.hash) {
         return;
       }
@@ -393,6 +403,42 @@ function useTasks(): TaskStore {
     [mergeTask, showServiceError]
   );
 
+  const createMagnetTask = useCallback(
+    async (magnetUrl: string): Promise<TaskState | null> => {
+      const commandKey = `magnet\0${magnetUrl}`;
+      if (inFlightCommandsRef.current.has(commandKey)) {
+        return null;
+      }
+      addInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
+      setError("");
+      try {
+        const item = await postJSON<TaskState>(taskListEndpoint(), { magnetUrl });
+        mergeTask(item);
+        const next = await requestJSON<TaskState>(taskActionEndpoint(item.id, "continue"), "PUT");
+        mergeTask(next);
+        return next;
+      } catch (err) {
+        showServiceError(err);
+        return null;
+      } finally {
+        clearInFlightCommand(inFlightCommandsRef.current, setInFlightCommands, commandKey);
+      }
+    },
+    [mergeTask, showServiceError]
+  );
+
+  const search = useCallback(
+    async (query: string, limit: number): Promise<void> => {
+      setError("");
+      try {
+        await postJSON<SearchResult[]>(searchEndpoint(), { query, limit });
+      } catch (err) {
+        showServiceError(err);
+      }
+    },
+    [showServiceError]
+  );
+
   useEffect(() => {
     const source = new EventSource(taskListStreamEndpoint());
     source.addEventListener("open", () => setError(""));
@@ -407,17 +453,30 @@ function useTasks(): TaskStore {
     error,
     inFlightCommands,
     searchResults: state?.searchResults ?? [],
+    createMagnetTask,
     createSearchResultTask,
     loadTask,
-    runTaskAction
+    runTaskAction,
+    search
   };
 }
 
-function SearchPanel({ onSearchStart }: { onSearchStart: () => void }) {
+function CreatePanel({
+  createMagnetTask,
+  onSearchComplete,
+  onTaskCreated,
+  search,
+  searchResults
+}: {
+  createMagnetTask: (magnetUrl: string) => Promise<TaskState | null>;
+  onSearchComplete: () => void;
+  onTaskCreated: (task: TaskState) => void;
+  search: (query: string, limit: number) => Promise<void>;
+  searchResults: SearchResult[];
+}) {
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(50);
   const [searching, setSearching] = useState(false);
-  const [error, setError] = useState("");
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -426,26 +485,31 @@ function SearchPanel({ onSearchStart }: { onSearchStart: () => void }) {
       return;
     }
     setSearching(true);
-    setError("");
-    onSearchStart();
     try {
-      await postJSON<SearchResult[]>(searchEndpoint(), { query: normalized, limit });
-    } catch (err) {
-      setError(serviceErrorMessage(err));
+      if (isMagnetInput(normalized)) {
+        const task = await createMagnetTask(normalized);
+        if (task) {
+          onTaskCreated(task);
+          setQuery("");
+        }
+        return;
+      }
+      await search(normalized, limit);
+      onSearchComplete();
     } finally {
       setSearching(false);
     }
   }
 
   return (
-    <section className="queryPanel">
-      <form className="queryForm" onSubmit={(event) => { void submit(event); }}>
+    <section className="createPanel">
+      <form className="createForm" onSubmit={(event) => { void submit(event); }}>
         <label className="queryField">
           <Search size={16} />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search downloads"
+            placeholder="Search torrents or paste MagnetLink"
           />
         </label>
         <label className="limitField">
@@ -460,11 +524,78 @@ function SearchPanel({ onSearchStart }: { onSearchStart: () => void }) {
         </label>
         <button className="primaryButton" disabled={searching || query.trim() === ""} type="submit">
           {searching ? <span className="spinner" aria-hidden="true" /> : <Search size={16} />}
-          <span>Search</span>
+          <span>{isMagnetInput(query) ? "Create" : "Search"}</span>
         </button>
       </form>
-      {error && <div className="inlineError">{error}</div>}
+      {searchResults.length > 0 && (
+        <div className="createPanelMeta">
+          {formatCount(searchResults.length, "result")}
+        </div>
+      )}
     </section>
+  );
+}
+
+function SearchWorkspace({
+  inFlightCommands,
+  onCreate,
+  results
+}: {
+  inFlightCommands: Set<string>;
+  onCreate: (result: SearchResult) => Promise<void>;
+  results: SearchResult[];
+}) {
+  return (
+    <section className="taskList" aria-label="Search results">
+      {results.length === 0 ? (
+        <div className="emptyBox">No search results</div>
+      ) : (
+        <SearchResultsPanel
+          inFlightCommands={inFlightCommands}
+          onCreate={onCreate}
+          results={results}
+        />
+      )}
+    </section>
+  );
+}
+
+function SearchResultsPanel({
+  inFlightCommands,
+  onCreate,
+  results
+}: {
+  inFlightCommands: Set<string>;
+  onCreate: (result: SearchResult) => Promise<void>;
+  results: SearchResult[];
+}) {
+  return (
+    <div className="searchResults">
+      {results.map((result) => {
+        const busy = inFlightCommands.has(searchResultActionKey(result));
+        return (
+          <article className="resultRow" key={result.hash || `${result.provider}:${result.title}`}>
+            <div className="resultBody">
+              <div className="resultTitle">{result.title}</div>
+              <div className="resultMeta">
+                <span>{result.provider || "-"}</span>
+                <span>{formatBytes(result.bytes)}</span>
+                <span>{result.seeders}/{result.peers}</span>
+                {result.category && <span>{result.category}</span>}
+              </div>
+            </div>
+            <button
+              className="iconButton taskAction continue"
+              disabled={busy || !result.hash}
+              onClick={() => { void onCreate(result); }}
+              title="Create and continue"
+            >
+              {busy ? <span className="spinner" aria-hidden="true" /> : <Play size={16} />}
+            </button>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
@@ -544,28 +675,24 @@ const TaskCard = React.memo(function TaskCard({
             inFlightCommands={inFlightCommands}
             item={item}
             onAction={onTaskAction}
-            title={item.source === "search" ? "Create and continue" : "Continue"}
+            title="Continue"
           />
-          {item.source === "download" && (
-            <>
-              <TaskActionButton
-                action="pause"
-                icon={<Pause size={16} />}
-                inFlightCommands={inFlightCommands}
-                item={item}
-                onAction={onTaskAction}
-                title="Pause"
-              />
-              <TaskActionButton
-                action="delete"
-                icon={<Trash2 size={16} />}
-                inFlightCommands={inFlightCommands}
-                item={item}
-                onAction={onTaskAction}
-                title="Delete task"
-              />
-            </>
-          )}
+          <TaskActionButton
+            action="pause"
+            icon={<Pause size={16} />}
+            inFlightCommands={inFlightCommands}
+            item={item}
+            onAction={onTaskAction}
+            title="Pause"
+          />
+          <TaskActionButton
+            action="delete"
+            icon={<Trash2 size={16} />}
+            inFlightCommands={inFlightCommands}
+            item={item}
+            onAction={onTaskAction}
+            title="Delete task"
+          />
           {item.magnetUrl && (
             <CopyButton value={item.magnetUrl} title="Copy MagnetLink" variant="magnet" size={17} />
           )}
@@ -1030,17 +1157,20 @@ function CodeBlock({
 function ViewTab({
   children,
   current,
+  disabled = false,
   onChange,
   value
 }: {
   children: React.ReactNode;
   current: TaskView;
+  disabled?: boolean;
   onChange: (value: TaskView) => void;
   value: TaskView;
 }) {
   return (
     <button
       className={`viewTab ${current === value ? "active" : ""}`}
+      disabled={disabled}
       onClick={() => onChange(value)}
       type="button"
     >
@@ -1149,9 +1279,6 @@ function DeleteTaskDialog({
 function canRunTaskAction(item: TaskListItem, action: TaskAction): boolean {
   if (!item.hash) {
     return false;
-  }
-  if (item.source === "search") {
-    return action === "continue";
   }
   switch (action) {
     case "continue":
@@ -1272,61 +1399,15 @@ function CopyButton({
   );
 }
 
-function taskListItems(searchResults: SearchResult[], downloads: TaskState[], view: TaskView): TaskListItem[] {
-  if (view !== "search") {
-    return downloads
-      .filter((item) => taskMatchesView(item, view))
-      .map((item): TaskListItem => ({ ...item, source: "download" }));
+function taskListItems(downloads: TaskState[], view: TaskView): TaskListItem[] {
+  if (view === "search") {
+    return [];
   }
-  const downloadsByHash = new Map(downloads.map((item) => [item.hash, item]).filter(([hash]) => Boolean(hash)) as [string, TaskState][]);
-  const currentSearchItems: TaskListItem[] = [];
-  for (const result of searchResults) {
-    if (!result.hash) {
-      continue;
-    }
-    const download = downloadsByHash.get(result.hash);
-    currentSearchItems.push(download ? { ...download, source: "download" } : searchResultListItem(result));
-  }
-  return currentSearchItems;
+  return downloads.filter((item) => view === "done" ? item.download.status === "complete" : isActiveTask(item));
 }
 
-function taskMatchesView(item: TaskState, view: Exclude<TaskView, "search">): boolean {
-  if (view === "downloading") {
-    return item.download.status === "downloading" || item.download.status === "paused";
-  }
-  return item.download.status === view;
-}
-
-function searchResultListItem(result: SearchResult): TaskListItem {
-  const hash = result.hash || "";
-  return {
-    id: hash || `search:${result.provider}:${result.title}`,
-    title: result.title,
-    provider: result.provider,
-    bytes: result.bytes,
-    category: result.category,
-    date: result.date,
-    seeders: result.seeders,
-    peers: result.peers,
-    hash,
-    magnetUrl: result.magnetUrl,
-    path: "",
-    downloading: false,
-    download: {
-      status: "idle",
-      completedBytes: 0,
-      bytes: result.bytes || 0
-    },
-    runtime: {
-      status: "inactive"
-    },
-    source: "search",
-    searchResult: result
-  };
-}
-
-function isCountedDownload(item: TaskState): boolean {
-  return item.downloading || item.download.status !== "idle" || item.download.completedBytes > 0;
+function isActiveTask(item: TaskState): boolean {
+  return item.download.status !== "complete";
 }
 
 function mergeListTask(listItem: TaskState, detailItem?: TaskState): TaskState {
@@ -1409,6 +1490,10 @@ function taskActionEndpoint(id: string, action: TaskAction, options: TaskActionO
 
 function taskActionMethod(action: TaskAction): "PUT" | "DELETE" {
   return action === "delete" ? "DELETE" : "PUT";
+}
+
+function isMagnetInput(value: string): boolean {
+  return value.trim().toLowerCase().startsWith("magnet:");
 }
 
 async function getJSON<T>(url: string): Promise<T> {

@@ -3,6 +3,8 @@ package magnet
 import (
 	"net/url"
 	"strings"
+
+	"github.com/anacrolix/torrent/metainfo"
 )
 
 const scheme = "magnet:"
@@ -37,4 +39,20 @@ func NormalizeURLPtr(value *string) *string {
 
 func HasScheme(value string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), scheme)
+}
+
+func InfoHash(value string) string {
+	parsed, err := metainfo.ParseMagnetUri(NormalizeURL(value))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(parsed.InfoHash.HexString())
+}
+
+func DisplayName(value string) string {
+	parsed, err := metainfo.ParseMagnetUri(NormalizeURL(value))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.DisplayName)
 }

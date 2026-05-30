@@ -31,8 +31,10 @@ type SearchRequest struct {
 }
 
 type CreateTaskRequest struct {
-	Result model.SearchResult `json:"result"`
-	Path   string             `json:"path,omitempty"`
+	Result    model.SearchResult `json:"result"`
+	Title     string             `json:"title,omitempty"`
+	MagnetURL string             `json:"magnetUrl,omitempty"`
+	Path      string             `json:"path,omitempty"`
 }
 
 type FileStatus string

@@ -16,6 +16,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"4dl/internal/logging"
+	"4dl/internal/magnet"
 	"4dl/internal/model"
 )
 
@@ -284,6 +285,36 @@ func (m *Manager) CreateTask(result model.SearchResult, path string) (TaskState,
 	return m.doCreate(item)
 }
 
+func (m *Manager) CreateMagnetTask(title, magnetURL, path string) (TaskState, error) {
+	path, err := m.resolveTaskPath(path)
+	if err != nil {
+		return TaskState{}, err
+	}
+	normalized := magnet.NormalizeURL(magnetURL)
+	if !magnet.HasScheme(normalized) {
+		return TaskState{}, errSearchResultMissingHash
+	}
+	hash := magnet.InfoHash(normalized)
+	if hash == "" {
+		return TaskState{}, errSearchResultMissingHash
+	}
+	if strings.TrimSpace(title) == "" {
+		title = magnet.DisplayName(normalized)
+	}
+	if strings.TrimSpace(title) == "" {
+		title = hash
+	}
+	item := TaskItem{
+		ID:        hash,
+		Title:     strings.TrimSpace(title),
+		Provider:  "magnet",
+		Hash:      hash,
+		MagnetURL: normalized,
+		Path:      path,
+	}
+	return m.doCreate(item)
+}
+
 func (m *Manager) resolveTaskPath(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -432,12 +463,71 @@ func (m *Manager) runtimeSnapshotIfLoaded(id string) (*RuntimeSnapshot, bool, er
 }
 
 func (m *Manager) StartTask(ctx context.Context, id string) (TaskItem, bool, error) {
+	ok, err := m.prepareTaskContinue(id)
+	if !ok || err != nil {
+		return TaskItem{}, ok, err
+	}
 	t, ok, err := m.restoreTaskRuntime(ctx, id, true)
 	if !ok || err != nil {
+		if err != nil {
+			m.abortTaskContinue(id, err)
+		}
 		return TaskItem{}, ok, err
 	}
 	m.doStart(id, t)
 	return m.refreshFiles(id, t), true, nil
+}
+
+func (m *Manager) prepareTaskContinue(id string) (bool, error) {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return true, errManagerClosed
+	}
+	item, ok := m.items[id]
+	if !ok {
+		m.mu.Unlock()
+		return false, nil
+	}
+	if current, ok := m.downloads[id]; ok {
+		if current.Active || current.Status == TaskStatusComplete {
+			m.mu.Unlock()
+			return true, nil
+		}
+		current.Status = TaskStatusDownloading
+	} else {
+		m.downloads[id] = &torrentDownload{
+			ID:             id,
+			Status:         TaskStatusDownloading,
+			CompletedBytes: item.Download.CompletedBytes,
+			Bytes:          item.Download.Bytes,
+		}
+	}
+	item.Downloading = false
+	item.Download = m.downloadViewLocked(id, nil)
+	record := m.storedRecordLocked(item)
+	m.mu.Unlock()
+	return true, m.saveStoredRecord(record)
+}
+
+func (m *Manager) abortTaskContinue(id string, cause error) {
+	m.mu.Lock()
+	var record StoredTask
+	recordOK := false
+	if download, ok := m.downloads[id]; ok && !download.Active {
+		download.Status = TaskStatusPaused
+	}
+	if item, ok := m.items[id]; ok {
+		item.Downloading = false
+		item.Error = cause.Error()
+		item.Download = m.downloadViewLocked(id, nil)
+		record = m.storedRecordLocked(item)
+		recordOK = true
+	}
+	m.mu.Unlock()
+	if recordOK {
+		m.saveStoredRecordBestEffort(record)
+	}
 }
 
 func (m *Manager) restoreTaskRuntime(ctx context.Context, id string, track bool) (*torrent.Torrent, bool, error) {
