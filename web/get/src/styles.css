@@ -452,6 +452,13 @@ h1 {
   color: #cf222e;
 }
 
+.statusBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -476,6 +483,12 @@ h1 {
   border-color: #a6e3b7;
   background: #dafbe1;
   color: #1a7f37;
+}
+
+.status.seeding {
+  border-color: #9ec5fe;
+  background: #ddf4ff;
+  color: #0969da;
 }
 
 .spinner {

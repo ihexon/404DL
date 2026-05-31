@@ -5,6 +5,7 @@ import {
   Calendar,
   Check,
   ChevronRight,
+  CircleStop,
   Database,
   Download,
   FileText,
@@ -16,7 +17,6 @@ import {
   Play,
   RadioTower,
   Search,
-  SignalZero,
   Settings,
   Trash2,
   Upload,
@@ -97,9 +97,11 @@ type TaskHeaderData = {
   category?: string;
   hash?: string;
   magnetUrl?: string;
-  status?: TaskStatus;
-  uploading?: boolean;
+  badges: TaskBadge[];
 };
+
+type TaskBadge = "downloading" | "complete" | "seeding";
+type SeedingState = "unavailable" | "stopped" | "seeding";
 
 type RuntimeView = {
   status: "inactive" | "ready" | "error";
@@ -835,7 +837,7 @@ const TaskEntry = React.memo(function TaskEntry({
       <TaskHeader
         actions={(
           <>
-            {task.download.status === "complete" ? (
+            {taskSeedingState(task) !== "unavailable" ? (
               <SeedingToggleButton
                 inFlightCommands={inFlightCommands}
                 task={task}
@@ -911,7 +913,7 @@ function TaskHeader({
         </div>
       </div>
 
-      <DownloadStatus status={data.status} />
+      <TaskStatusBadges badges={data.badges} />
 
       <div className="taskActions" onClick={(event) => event.stopPropagation()}>
         {actions}
@@ -1391,8 +1393,19 @@ function ViewTab({
   );
 }
 
-function DownloadStatus({ status }: { status: TaskStatus }) {
-  if (status === "downloading") {
+function TaskStatusBadges({ badges }: { badges: TaskBadge[] }) {
+  if (badges.length === 0) {
+    return null;
+  }
+  return (
+    <div className="statusBadges">
+      {badges.map((badge) => <TaskStatusBadge key={badge} badge={badge} />)}
+    </div>
+  );
+}
+
+function TaskStatusBadge({ badge }: { badge: TaskBadge }) {
+  if (badge === "downloading") {
     return (
       <span className="status downloading">
         <span className="spinner" aria-hidden="true" />
@@ -1400,8 +1413,13 @@ function DownloadStatus({ status }: { status: TaskStatus }) {
       </span>
     );
   }
-  if (status !== "complete") {
-    return null;
+  if (badge === "seeding") {
+    return (
+      <span className="status seeding">
+        <Upload size={14} />
+        Seeding
+      </span>
+    );
   }
   return (
     <span className="status complete">
@@ -1420,7 +1438,10 @@ function DownloadToggleButton({
   task: TaskState;
   onAction: (item: TaskState, action: TaskAction) => Promise<void>;
 }) {
-  const action: TaskAction = task.download.status === "downloading" ? "pause" : "continue";
+  const action = taskDownloadAction(task);
+  if (!action) {
+    return null;
+  }
   return (
     <TaskActionButton
       action={action}
@@ -1442,15 +1463,19 @@ function SeedingToggleButton({
   task: TaskState;
   onAction: (item: TaskState, action: TaskAction) => Promise<void>;
 }) {
-  const action: TaskAction = task.uploading ? "stop-seeding" : "start-seeding";
+  const action = taskSeedingAction(task);
+  if (!action) {
+    return null;
+  }
+  const seeding = action === "stop-seeding";
   return (
     <TaskActionButton
       action={action}
-      icon={task.uploading ? <SignalZero size={16} /> : <Upload size={16} />}
+      icon={seeding ? <CircleStop size={16} /> : <Upload size={16} />}
       inFlightCommands={inFlightCommands}
       task={task}
       onAction={onAction}
-      title={task.uploading ? "Stop seeding" : "Start seeding"}
+      title={seeding ? "Stop seeding" : "Start seeding"}
     />
   );
 }
@@ -1538,16 +1563,51 @@ function canRunTaskAction(task: TaskState, action: TaskAction): boolean {
   }
   switch (action) {
     case "continue":
-      return task.download.status !== "downloading" && task.download.status !== "complete";
+      return taskDownloadAction(task) === "continue";
     case "pause":
-      return task.download.status === "downloading";
+      return taskDownloadAction(task) === "pause";
     case "start-seeding":
-      return task.download.status === "complete" && !task.uploading;
+      return taskSeedingAction(task) === "start-seeding";
     case "stop-seeding":
-      return task.download.status === "complete" && task.uploading;
+      return taskSeedingAction(task) === "stop-seeding";
     case "delete":
       return true;
   }
+}
+
+function taskDownloadAction(task: TaskState): Extract<TaskAction, "continue" | "pause"> | null {
+  if (task.download.status === "downloading") {
+    return "pause";
+  }
+  if (task.download.status === "complete") {
+    return null;
+  }
+  return "continue";
+}
+
+function taskSeedingAction(task: TaskState): Extract<TaskAction, "start-seeding" | "stop-seeding"> | null {
+  const state = taskSeedingState(task);
+  if (state === "unavailable") {
+    return null;
+  }
+  return state === "seeding" ? "stop-seeding" : "start-seeding";
+}
+
+function taskSeedingState(task: TaskState): SeedingState {
+  if (task.download.status !== "complete") {
+    return "unavailable";
+  }
+  return task.runtime.status === "ready" ? "seeding" : "stopped";
+}
+
+function taskStatusBadges(task: TaskState): TaskBadge[] {
+  if (task.download.status === "downloading") {
+    return ["downloading"];
+  }
+  if (task.download.status !== "complete") {
+    return [];
+  }
+  return taskSeedingState(task) === "seeding" ? ["complete", "seeding"] : ["complete"];
 }
 
 function FilePanel({ item }: { item: TaskState }) {
@@ -1691,8 +1751,7 @@ function taskHeaderDataFromTask(task: TaskState): TaskHeaderData {
     category: task.category,
     hash: task.hash,
     magnetUrl: task.magnetUrl,
-    status: task.download.status,
-    uploading: task.uploading
+    badges: taskStatusBadges(task)
   };
 }
 
@@ -1706,7 +1765,8 @@ function taskHeaderDataFromSearchResult(result: SearchResult): TaskHeaderData {
     date: result.date,
     category: result.category,
     hash: result.hash,
-    magnetUrl: result.magnetUrl
+    magnetUrl: result.magnetUrl,
+    badges: []
   };
 }
 
