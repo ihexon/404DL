@@ -478,18 +478,6 @@ h1 {
   color: #1a7f37;
 }
 
-.status.seeding {
-  border-color: #9ec5fe;
-  background: #ddf4ff;
-  color: #0969da;
-}
-
-.status.stopped {
-  border-color: #d0d7de;
-  background: #f6f8fa;
-  color: #57606a;
-}
-
 .spinner {
   width: 10px;
   height: 10px;

@@ -909,7 +909,7 @@ function TaskHeader({
         </div>
       </div>
 
-      <DownloadStatus status={data.status} uploading={Boolean(data.uploading)} />
+      <DownloadStatus status={data.status} />
 
       <div className="taskActions" onClick={(event) => event.stopPropagation()}>
         {actions}
@@ -1389,7 +1389,7 @@ function ViewTab({
   );
 }
 
-function DownloadStatus({ status, uploading }: { status: TaskStatus; uploading: boolean }) {
+function DownloadStatus({ status }: { status: TaskStatus }) {
   if (status === "downloading") {
     return (
       <span className="status downloading">
@@ -1401,18 +1401,10 @@ function DownloadStatus({ status, uploading }: { status: TaskStatus; uploading: 
   if (status !== "complete") {
     return null;
   }
-  if (uploading) {
-    return (
-      <span className="status seeding">
-        <RadioTower size={14} />
-        Seeding now
-      </span>
-    );
-  }
   return (
-    <span className="status stopped">
-      <SignalZero size={14} />
-      Seeding stopped
+    <span className="status complete">
+      <Check size={14} />
+      Complete
     </span>
   );
 }
