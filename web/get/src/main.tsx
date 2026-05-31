@@ -6,6 +6,7 @@ import {
   Check,
   ChevronRight,
   Database,
+  Download,
   FileText,
   HardDrive,
   Network,
@@ -18,6 +19,7 @@ import {
   SignalZero,
   Settings,
   Trash2,
+  Upload,
   Users
 } from "lucide-react";
 import "./styles.css";
@@ -1422,7 +1424,7 @@ function DownloadToggleButton({
   return (
     <TaskActionButton
       action={action}
-      icon={action === "pause" ? <Pause size={16} /> : <Play size={16} />}
+      icon={action === "pause" ? <Pause size={16} /> : <Download size={16} />}
       inFlightCommands={inFlightCommands}
       task={task}
       onAction={onAction}
@@ -1444,7 +1446,7 @@ function SeedingToggleButton({
   return (
     <TaskActionButton
       action={action}
-      icon={task.uploading ? <SignalZero size={16} /> : <RadioTower size={16} />}
+      icon={task.uploading ? <SignalZero size={16} /> : <Upload size={16} />}
       inFlightCommands={inFlightCommands}
       task={task}
       onAction={onAction}
