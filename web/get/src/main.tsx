@@ -100,7 +100,7 @@ type TaskHeaderData = {
   badges: TaskBadge[];
 };
 
-type TaskBadge = "downloading" | "complete" | "seeding";
+type TaskBadge = "downloading" | "paused" | "complete" | "seeding";
 type SeedingState = "unavailable" | "stopped" | "seeding";
 
 type RuntimeView = {
@@ -1413,6 +1413,14 @@ function TaskStatusBadge({ badge }: { badge: TaskBadge }) {
       </span>
     );
   }
+  if (badge === "paused") {
+    return (
+      <span className="status paused">
+        <Pause size={14} />
+        Paused
+      </span>
+    );
+  }
   if (badge === "seeding") {
     return (
       <span className="status seeding">
@@ -1603,6 +1611,9 @@ function taskSeedingState(task: TaskState): SeedingState {
 function taskStatusBadges(task: TaskState): TaskBadge[] {
   if (task.download.status === "downloading") {
     return ["downloading"];
+  }
+  if (task.download.status === "paused") {
+    return ["paused"];
   }
   if (task.download.status !== "complete") {
     return [];
