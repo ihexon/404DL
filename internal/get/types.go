@@ -67,6 +67,7 @@ type TaskItem struct {
 	MagnetURL   string       `json:"magnetUrl,omitempty"`
 	Path        string       `json:"path"`
 	Downloading bool         `json:"downloading"`
+	Uploading   bool         `json:"uploading"`
 	Download    DownloadView `json:"download"`
 	Error       string       `json:"error,omitempty"`
 	Files       []FileItem   `json:"files,omitempty"`

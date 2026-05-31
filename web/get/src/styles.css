@@ -437,6 +437,16 @@ h1 {
   color: #7d4e00;
 }
 
+.taskAction.start-seeding:not(:disabled) {
+  border-color: #9ec5fe;
+  color: #0969da;
+}
+
+.taskAction.stop-seeding:not(:disabled) {
+  border-color: #d4a72c;
+  color: #7d4e00;
+}
+
 .taskAction.delete:not(:disabled) {
   border-color: #ffcecb;
   color: #cf222e;
@@ -466,6 +476,12 @@ h1 {
   border-color: #a6e3b7;
   background: #dafbe1;
   color: #1a7f37;
+}
+
+.status.seeding {
+  border-color: #9ec5fe;
+  background: #ddf4ff;
+  color: #0969da;
 }
 
 .spinner {

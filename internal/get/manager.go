@@ -24,6 +24,7 @@ var errManagerClosed = errors.New("get manager closed")
 var errSearchResultMissingHash = errors.New("search result missing hash")
 var errTaskDeleting = errors.New("task deletion already in progress")
 var errTaskNotRunnable = errors.New("task is no longer runnable")
+var errTaskNotComplete = errors.New("task is not complete")
 
 type Manager struct {
 	downloadDir string
@@ -147,21 +148,38 @@ func (m *Manager) restoreStoredTask(id string, status TaskStatus) {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		t, ok, err := m.restoreTaskRuntime(m.ctx, id, false)
-		if !ok || err != nil {
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errManagerClosed) {
-				logrus.WithError(err).WithField("id", id).Warn("get task restore failed")
-			}
-			return
-		}
 		switch status {
 		case TaskStatusDownloading:
+			t, ok, err := m.restoreTaskRuntime(m.ctx, id, false)
+			if !ok || err != nil {
+				if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errManagerClosed) {
+					logrus.WithError(err).WithField("id", id).Warn("get task restore failed")
+				}
+				return
+			}
 			m.doStart(id, t)
 		case TaskStatusComplete:
+			if !m.taskUploading(id) {
+				return
+			}
+			t, ok, err := m.restoreTaskRuntime(m.ctx, id, false)
+			if !ok || err != nil {
+				if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errManagerClosed) {
+					logrus.WithError(err).WithField("id", id).Warn("get task restore failed")
+				}
+				return
+			}
 			t.AllowDataUpload()
 			t.DisallowDataDownload()
 			m.attachRestoredTorrent(id, status, false, t)
 		case TaskStatusPaused:
+			t, ok, err := m.restoreTaskRuntime(m.ctx, id, false)
+			if !ok || err != nil {
+				if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errManagerClosed) {
+					logrus.WithError(err).WithField("id", id).Warn("get task restore failed")
+				}
+				return
+			}
 			t.AllowDataUpload()
 			t.DisallowDataDownload()
 			m.attachRestoredTorrent(id, status, false, t)
@@ -178,8 +196,10 @@ func (m *Manager) attachRestoredTorrent(id string, status TaskStatus, active boo
 	if current, ok := m.downloads[id]; ok {
 		current.Status = status
 		current.Active = active
-		current.CompletedBytes = t.BytesCompleted()
-		current.Bytes = t.Length()
+		if t != nil {
+			current.CompletedBytes = t.BytesCompleted()
+			current.Bytes = t.Length()
+		}
 		current.torrent = t
 	}
 	if item, ok := m.items[id]; ok {
@@ -478,6 +498,94 @@ func (m *Manager) StartTask(ctx context.Context, id string) (TaskItem, bool, err
 	return m.refreshFiles(id, t), true, nil
 }
 
+func (m *Manager) StartTaskSeeding(ctx context.Context, id string) (TaskItem, bool, error) {
+	ok, err := m.prepareTaskSeedingStart(id)
+	if !ok || err != nil {
+		return TaskItem{}, ok, err
+	}
+	t, ok, err := m.restoreTaskRuntime(ctx, id, true)
+	if !ok || err != nil {
+		if err != nil {
+			m.abortTaskSeedingStart(id, err)
+		}
+		return TaskItem{}, ok, err
+	}
+	t.AllowDataUpload()
+	t.DisallowDataDownload()
+	return m.attachTaskSeeding(id, t), true, nil
+}
+
+func (m *Manager) prepareTaskSeedingStart(id string) (bool, error) {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return true, errManagerClosed
+	}
+	item, ok := m.items[id]
+	if !ok {
+		m.mu.Unlock()
+		return false, nil
+	}
+	if item.Download.Status != TaskStatusComplete {
+		m.mu.Unlock()
+		return true, errTaskNotComplete
+	}
+	item.Uploading = true
+	item.Error = ""
+	item.Downloading = false
+	item.Download = m.downloadViewLocked(id, nil)
+	record := m.storedRecordLocked(item)
+	m.mu.Unlock()
+	return true, m.saveStoredRecord(record)
+}
+
+func (m *Manager) abortTaskSeedingStart(id string, cause error) {
+	m.mu.Lock()
+	var record StoredTask
+	recordOK := false
+	if item, ok := m.items[id]; ok {
+		item.Uploading = false
+		item.Error = cause.Error()
+		item.Download = m.downloadViewLocked(id, nil)
+		record = m.storedRecordLocked(item)
+		recordOK = true
+	}
+	m.mu.Unlock()
+	if recordOK {
+		m.saveStoredRecordBestEffort(record)
+	}
+}
+
+func (m *Manager) attachTaskSeeding(id string, t *torrent.Torrent) TaskItem {
+	m.mu.Lock()
+	var out TaskItem
+	var record StoredTask
+	recordOK := false
+	if current, ok := m.downloads[id]; ok {
+		current.Status = TaskStatusComplete
+		current.Active = false
+		current.CompletedBytes = t.BytesCompleted()
+		current.Bytes = t.Length()
+		current.torrent = t
+		current.ctx = nil
+		current.cancel = nil
+	}
+	if item, ok := m.items[id]; ok {
+		item.Error = ""
+		item.Downloading = false
+		item.Uploading = true
+		item.Download = m.downloadViewLocked(id, t)
+		out = m.cloneItemLocked(item)
+		record = m.storedRecordLocked(item)
+		recordOK = true
+	}
+	m.mu.Unlock()
+	if recordOK {
+		m.saveStoredRecordBestEffort(record)
+	}
+	return out
+}
+
 func (m *Manager) prepareTaskContinue(id string) (bool, error) {
 	m.mu.Lock()
 	if m.closed {
@@ -504,6 +612,7 @@ func (m *Manager) prepareTaskContinue(id string) (bool, error) {
 		}
 	}
 	item.Downloading = false
+	item.Uploading = true
 	item.Download = m.downloadViewLocked(id, nil)
 	record := m.storedRecordLocked(item)
 	m.mu.Unlock()
@@ -674,6 +783,7 @@ func (m *Manager) prepareTorrentStart(id string, t *torrent.Torrent) (startedTor
 		cancel:         cancel,
 	}
 	item.Downloading = true
+	item.Uploading = true
 	item.Download = m.downloadViewLocked(id, t)
 	record := m.storedRecordLocked(item)
 	m.mu.Unlock()
@@ -733,6 +843,57 @@ func (m *Manager) doPause(id string) (TaskItem, bool, error) {
 	return m.refreshFiles(id, t), true, nil
 }
 
+func (m *Manager) StopTaskSeeding(ctx context.Context, id string) (TaskItem, bool, error) {
+	runtime, ok, err := m.downloadRuntime(id)
+	if !ok || err != nil {
+		return TaskItem{}, ok, err
+	}
+
+	var item TaskItem
+	var record StoredTask
+	recordOK := false
+	m.mu.Lock()
+	stored, ok := m.items[id]
+	if !ok {
+		m.mu.Unlock()
+		return TaskItem{}, false, nil
+	}
+	if stored.Download.Status != TaskStatusComplete {
+		item = m.cloneItemLocked(stored)
+		m.mu.Unlock()
+		return item, true, errTaskNotComplete
+	}
+	stored.Uploading = false
+	if current, ok := m.downloads[id]; ok {
+		if current.cancel != nil {
+			current.cancel()
+		}
+		current.Active = false
+		current.ctx = nil
+		current.cancel = nil
+		current.torrent = nil
+	}
+	stored.Downloading = false
+	stored.Download = m.downloadViewLocked(id, runtime.t)
+	item = m.cloneItemLocked(stored)
+	record = m.storedRecordLocked(stored)
+	recordOK = true
+	m.mu.Unlock()
+
+	if runtime.t != nil {
+		runtime.t.CancelPieces(0, int(runtime.t.NumPieces()))
+		runtime.t.DisallowDataUpload()
+		runtime.t.DisallowDataDownload()
+		runtime.t.Drop()
+	}
+	if recordOK {
+		if err := m.saveStoredRecord(record); err != nil {
+			return TaskItem{}, true, err
+		}
+	}
+	return item, true, nil
+}
+
 func (m *Manager) DeleteTask(ctx context.Context, id string, force bool) (TaskItem, bool, error) {
 	deletion, ok, err := m.prepareTaskDeletion(id)
 	if !ok || err != nil {
@@ -754,6 +915,7 @@ func (m *Manager) DeleteTask(ctx context.Context, id string, force bool) (TaskIt
 	}
 	item := deletion.item
 	item.Downloading = false
+	item.Uploading = false
 	item.Download = DownloadView{Status: TaskStatusIdle, Bytes: item.Bytes}
 	item.Files = nil
 	return item, true, nil
@@ -952,6 +1114,7 @@ func (m *Manager) finishTorrentDownload(id string, t *torrent.Torrent) {
 		item.Error = ""
 		item.Files = files
 		item.Downloading = false
+		item.Uploading = true
 		item.Download = m.downloadViewLocked(id, t)
 		record = m.storedRecordLocked(item)
 		recordOK = true
@@ -1132,6 +1295,13 @@ func (m *Manager) refreshFiles(id string, t *torrent.Torrent) TaskItem {
 	m.mu.Unlock()
 	m.saveStoredRecordBestEffort(record)
 	return out
+}
+
+func (m *Manager) taskUploading(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, ok := m.items[id]
+	return ok && item.Uploading
 }
 
 func (m *Manager) fileItems(id string, t *torrent.Torrent, downloading bool) ([]FileItem, int64) {

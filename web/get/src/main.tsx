@@ -15,6 +15,7 @@ import {
   Play,
   RadioTower,
   Search,
+  SignalZero,
   Settings,
   Trash2,
   Users
@@ -45,6 +46,7 @@ type TaskItem = {
   magnetUrl?: string;
   path: string;
   downloading: boolean;
+  uploading: boolean;
   download: DownloadView;
   error?: string;
   files?: FileItem[];
@@ -94,6 +96,7 @@ type TaskHeaderData = {
   hash?: string;
   magnetUrl?: string;
   status?: TaskStatus;
+  uploading?: boolean;
 };
 
 type RuntimeView = {
@@ -193,7 +196,7 @@ type RuntimeTaskEvent = {
   dhtNode?: string;
 };
 
-type TaskAction = "continue" | "pause" | "delete";
+type TaskAction = "continue" | "pause" | "start-seeding" | "stop-seeding" | "delete";
 type TaskView = "search" | "active" | "done" | "settings";
 type AppSettings = {
   newTaskPath: string;
@@ -830,22 +833,19 @@ const TaskEntry = React.memo(function TaskEntry({
       <TaskHeader
         actions={(
           <>
-            <TaskActionButton
-              action="continue"
-              icon={<Play size={16} />}
-              inFlightCommands={inFlightCommands}
-              task={task}
-              onAction={onTaskAction}
-              title="Continue"
-            />
-            <TaskActionButton
-              action="pause"
-              icon={<Pause size={16} />}
-              inFlightCommands={inFlightCommands}
-              task={task}
-              onAction={onTaskAction}
-              title="Pause"
-            />
+            {task.download.status === "complete" ? (
+              <SeedingToggleButton
+                inFlightCommands={inFlightCommands}
+                task={task}
+                onAction={onTaskAction}
+              />
+            ) : (
+              <DownloadToggleButton
+                inFlightCommands={inFlightCommands}
+                task={task}
+                onAction={onTaskAction}
+              />
+            )}
             <TaskActionButton
               action="delete"
               icon={<Trash2 size={16} />}
@@ -909,7 +909,7 @@ function TaskHeader({
         </div>
       </div>
 
-      <DownloadStatus status={data.status} />
+      <DownloadStatus status={data.status} uploading={Boolean(data.uploading)} />
 
       <div className="taskActions" onClick={(event) => event.stopPropagation()}>
         {actions}
@@ -1389,7 +1389,7 @@ function ViewTab({
   );
 }
 
-function DownloadStatus({ status }: { status: TaskStatus }) {
+function DownloadStatus({ status, uploading }: { status: TaskStatus; uploading: boolean }) {
   if (status === "downloading") {
     return (
       <span className="status downloading">
@@ -1401,11 +1401,63 @@ function DownloadStatus({ status }: { status: TaskStatus }) {
   if (status !== "complete") {
     return null;
   }
+  if (uploading) {
+    return (
+      <span className="status seeding">
+        <RadioTower size={14} />
+        Seeding
+      </span>
+    );
+  }
   return (
     <span className="status complete">
       <Check size={14} />
       Complete
     </span>
+  );
+}
+
+function DownloadToggleButton({
+  inFlightCommands,
+  task,
+  onAction
+}: {
+  inFlightCommands: Set<string>;
+  task: TaskState;
+  onAction: (item: TaskState, action: TaskAction) => Promise<void>;
+}) {
+  const action: TaskAction = task.download.status === "downloading" ? "pause" : "continue";
+  return (
+    <TaskActionButton
+      action={action}
+      icon={action === "pause" ? <Pause size={16} /> : <Play size={16} />}
+      inFlightCommands={inFlightCommands}
+      task={task}
+      onAction={onAction}
+      title={action === "pause" ? "Pause download" : "Continue"}
+    />
+  );
+}
+
+function SeedingToggleButton({
+  inFlightCommands,
+  task,
+  onAction
+}: {
+  inFlightCommands: Set<string>;
+  task: TaskState;
+  onAction: (item: TaskState, action: TaskAction) => Promise<void>;
+}) {
+  const action: TaskAction = task.uploading ? "stop-seeding" : "start-seeding";
+  return (
+    <TaskActionButton
+      action={action}
+      icon={task.uploading ? <SignalZero size={16} /> : <RadioTower size={16} />}
+      inFlightCommands={inFlightCommands}
+      task={task}
+      onAction={onAction}
+      title={task.uploading ? "Stop seeding" : "Start seeding"}
+    />
   );
 }
 
@@ -1495,6 +1547,10 @@ function canRunTaskAction(task: TaskState, action: TaskAction): boolean {
       return task.download.status !== "downloading" && task.download.status !== "complete";
     case "pause":
       return task.download.status === "downloading";
+    case "start-seeding":
+      return task.download.status === "complete" && !task.uploading;
+    case "stop-seeding":
+      return task.download.status === "complete" && task.uploading;
     case "delete":
       return true;
   }
@@ -1641,7 +1697,8 @@ function taskHeaderDataFromTask(task: TaskState): TaskHeaderData {
     category: task.category,
     hash: task.hash,
     magnetUrl: task.magnetUrl,
-    status: task.download.status
+    status: task.download.status,
+    uploading: task.uploading
   };
 }
 

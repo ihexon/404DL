@@ -134,6 +134,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
 	mux.HandleFunc("PUT /api/tasks/{id}/continue", s.handleStartTask)
 	mux.HandleFunc("PUT /api/tasks/{id}/pause", s.handlePauseTask)
+	mux.HandleFunc("PUT /api/tasks/{id}/start-seeding", s.handleStartTaskSeeding)
+	mux.HandleFunc("PUT /api/tasks/{id}/stop-seeding", s.handleStopTaskSeeding)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("GET /", s.handleStatic)
 	return requestLogger(mux)
@@ -375,6 +377,42 @@ func (s *Server) handlePauseTask(w http.ResponseWriter, r *http.Request) {
 	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
 		"id": id,
 	})).Info("get task paused")
+	s.notifyStateChanged()
+	writeTaskState(w, r, s.manager, id, http.StatusOK)
+}
+
+func (s *Server) handleStartTaskSeeding(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, ok, err := s.manager.StartTaskSeeding(r.Context(), id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, APIError{Error: "task not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
+		return
+	}
+	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+		"id": id,
+	})).Info("get task seeding started")
+	s.notifyStateChanged()
+	writeTaskState(w, r, s.manager, id, http.StatusOK)
+}
+
+func (s *Server) handleStopTaskSeeding(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, ok, err := s.manager.StopTaskSeeding(r.Context(), id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, APIError{Error: "task not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusConflict, APIError{Error: err.Error()})
+		return
+	}
+	logrus.WithFields(logging.MergeFields(r.Context(), logrus.Fields{
+		"id": id,
+	})).Info("get task seeding stopped")
 	s.notifyStateChanged()
 	writeTaskState(w, r, s.manager, id, http.StatusOK)
 }

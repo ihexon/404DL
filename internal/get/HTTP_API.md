@@ -23,6 +23,7 @@
 - `GET /api/tasks/stream2` 返回与 SSE `state` 事件 `data` 相同形状的当前 `AppState` JSON 快照，不打开长连接。
 - `/api/docs/` 里的 Swagger UI 不能可靠 Try out SSE 长连接；调试时使用 `curl -N /api/tasks/stream` 或浏览器 `EventSource`。
 - `PUT /api/tasks/{id}/continue` 是长任务控制接口：成功返回 `202 Accepted`，但当前实现可能等待 metadata ready 后才返回。AI Agent 应设置客户端超时，并通过 `GET /api/tasks/{id}` 或 SSE 继续观察状态。
+- BT 任务完成后默认保持 `uploading=true` 继续做种；`PUT /api/tasks/{id}/stop-seeding` 只对完成任务停止做种，`PUT /api/tasks/{id}/start-seeding` 可恢复做种。
 - `DELETE /api/tasks/{id}` 默认只删除任务记录并保留本地文件；传 `force=true` 时才删除本地数据。对 torrent 文件夹任务，强制删除会删除整个任务根目录，行为对齐 Gopeed。
 - 不维护 per-task SSE；详情通过 `GET /api/tasks/{id}` 获取。
 - `RuntimeSnapshot.summary.transfer` 和 `RuntimeSnapshot.peers[].transfer` 提供上下行速率，字段为 `downloadRate` 和 `uploadRate`。

@@ -313,7 +313,7 @@
             "put": {
                 "operationId": "pauseTask",
                 "summary": "Pause task download",
-                "description": "Pauses an active task download. If the task has no active runtime, the API returns the current item state.",
+                "description": "Pauses an active task download while keeping BitTorrent upload/seeding enabled. If the task has no active download runtime, the API returns the current item state.",
                 "parameters": [
                     {
                         "$ref": "#/components/parameters/TaskID"
@@ -322,6 +322,66 @@
                 "responses": {
                     "200": {
                         "description": "Download paused or current state returned.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/TaskNotFound"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    }
+                }
+            }
+        },
+        "/api/tasks/{id}/start-seeding": {
+            "put": {
+                "operationId": "startTaskSeeding",
+                "summary": "Start task seeding",
+                "description": "Starts BitTorrent upload/seeding for a completed task. The task remains complete; only the uploading flag and torrent runtime change.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/TaskID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Seeding started.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TaskState"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/TaskNotFound"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    }
+                }
+            }
+        },
+        "/api/tasks/{id}/stop-seeding": {
+            "put": {
+                "operationId": "stopTaskSeeding",
+                "summary": "Stop task seeding",
+                "description": "Stops BitTorrent upload/seeding for a completed task. The task remains complete; only the uploading flag and torrent runtime change.",
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/TaskID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Seeding stopped.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -579,6 +639,7 @@
                     "peers",
                     "path",
                     "downloading",
+                    "uploading",
                     "download",
                     "runtime"
                 ],
@@ -623,6 +684,10 @@
                     "downloading": {
                         "type": "boolean"
                     },
+                    "uploading": {
+                        "type": "boolean",
+                        "description": "Whether the completed BitTorrent task is currently allowed to upload/seed."
+                    },
                     "download": {
                         "$ref": "#/components/schemas/DownloadView"
                     },
@@ -655,6 +720,7 @@
                     "peers",
                     "path",
                     "downloading",
+                    "uploading",
                     "download"
                 ],
                 "properties": {
@@ -697,6 +763,10 @@
                     },
                     "downloading": {
                         "type": "boolean"
+                    },
+                    "uploading": {
+                        "type": "boolean",
+                        "description": "Whether the completed BitTorrent task is currently allowed to upload/seed."
                     },
                     "download": {
                         "$ref": "#/components/schemas/DownloadView"
