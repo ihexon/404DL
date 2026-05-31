@@ -162,7 +162,7 @@ func (m *Manager) restoreStoredTask(id string, status TaskStatus) {
 			t.DisallowDataDownload()
 			m.attachRestoredTorrent(id, status, false, t)
 		case TaskStatusPaused:
-			t.DisallowDataUpload()
+			t.AllowDataUpload()
 			t.DisallowDataDownload()
 			m.attachRestoredTorrent(id, status, false, t)
 		}
@@ -704,7 +704,6 @@ func (m *Manager) doPause(id string) (TaskItem, bool, error) {
 
 	t := runtime.t
 	t.CancelPieces(0, int(t.NumPieces()))
-	t.DisallowDataUpload()
 	t.DisallowDataDownload()
 	m.mu.Lock()
 	var record StoredTask
