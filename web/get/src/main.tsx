@@ -1405,14 +1405,14 @@ function DownloadStatus({ status, uploading }: { status: TaskStatus; uploading: 
     return (
       <span className="status seeding">
         <RadioTower size={14} />
-        Seeding
+        Seeding now
       </span>
     );
   }
   return (
-    <span className="status complete">
-      <Check size={14} />
-      Complete
+    <span className="status stopped">
+      <SignalZero size={14} />
+      Seeding stopped
     </span>
   );
 }
